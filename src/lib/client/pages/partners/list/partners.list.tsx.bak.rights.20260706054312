@@ -1,0 +1,1947 @@
+// SPDX-FileCopyrightText: 2025 Contributors to the CitrineOS Project
+//
+// SPDX-License-Identifier: Apache-2.0
+'use client';
+
+import { MenuSection } from '@lib/client/components/main-menu/main.menu';
+import { Table } from '@lib/client/components/table';
+import { Button } from '@lib/client/components/ui/button';
+import {
+  type ChartConfig,
+  ChartContainer,
+  ChartTooltip,
+  ChartTooltipContent,
+} from '@lib/client/components/ui/chart';
+import { Input } from '@lib/client/components/ui/input';
+import { Label } from '@lib/client/components/ui/label';
+import {
+  Table as DataTable,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@lib/client/components/ui/table';
+import { Textarea } from '@lib/client/components/ui/textarea';
+import { partnersColumns } from '@lib/client/pages/partners/columns';
+import { TenantPartnerClass } from '@lib/cls/tenant.partner.cls';
+import {
+  ACCESS_CONTROL_ROLE_OPTIONS,
+  ACCESS_CONTROL_SCOPES,
+  ROLE_PERMISSIONS,
+} from '@lib/providers/access-control-provider';
+import { PARTNERS_LIST_QUERY } from '@lib/queries/tenant.partners';
+import { ActionType, ResourceType } from '@lib/utils/access.types';
+import { AccessDeniedFallback } from '@lib/utils/AccessDeniedFallback';
+import { DEFAULT_SORTERS } from '@lib/utils/consts';
+import { getPlainToInstanceOptions } from '@lib/utils/tables';
+import { CanAccess, useTranslate } from '@refinedev/core';
+import {
+  BarChart3,
+  Building2,
+  CircleDollarSign,
+  ClipboardCheck,
+  Clock3,
+  Cpu,
+  FileText,
+  History,
+  MapPin,
+  Plug,
+  Plus,
+  ReceiptText,
+  ShieldCheck,
+  SlidersHorizontal,
+  TriangleAlert,
+  UserCog,
+  Users,
+  Zap,
+} from 'lucide-react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { type ChangeEvent, useEffect, useMemo, useState } from 'react';
+import {
+  Bar,
+  BarChart as RechartsBarChart,
+  CartesianGrid,
+  Line,
+  LineChart,
+  XAxis,
+  YAxis,
+} from 'recharts';
+import { heading2Style } from '@lib/client/styles/page';
+import {
+  tableHeaderWrapperFlex,
+  tableSearchFlex,
+  tableWrapperStyle,
+} from '@lib/client/styles/table';
+import { buttonIconSize } from '@lib/client/styles/icon';
+import { useColumnPreferences } from '@lib/client/hooks/useColumnPreferences';
+
+export const PartnersList = () => {
+  const { push } = useRouter();
+  const searchParams = useSearchParams();
+  const translate = useTranslate();
+  const [tariffForm, setTariffForm] = useState({
+    changeDate: '',
+    changeTime: '',
+    currentRate: '',
+    changeDetails: '',
+    changeNote: '',
+  });
+  const [showTariffForm, setShowTariffForm] = useState(false);
+  const [showEmergencyAccessForm, setShowEmergencyAccessForm] = useState(false);
+  const [showCreateUserForm, setShowCreateUserForm] = useState(false);
+  const [emergencyAccessForm, setEmergencyAccessForm] = useState({
+    grantedTo: '',
+    startTime: '',
+    endTime: '',
+    note: '',
+  });
+  const [createUserForm, setCreateUserForm] = useState({
+    name: '',
+    email: '',
+    userRole: '',
+    scope: '',
+    note: '',
+  });
+
+  const { renderedVisibleColumns, columnSelector } = useColumnPreferences(
+    partnersColumns,
+    ResourceType.PARTNERS,
+  );
+
+  const roleMatrix = useMemo(
+    () => [
+      {
+        id: 'super-admin',
+        scope: 'Platform-Wide',
+        title: 'Super Admin',
+        description:
+          'Single point of pricing accountability; no propose/approve chain.',
+        headerClassName: 'bg-[#4b0b0e] text-red-200',
+        sections: [
+          {
+            title: 'Oversight',
+            items: [
+              {
+                icon: History,
+                title: 'Audit Activity',
+                description:
+                  'Permanent append-only record of who did what, when, across every privileged platform action.',
+              },
+              {
+                icon: FileText,
+                title: 'Diagnostics / Logs',
+                description:
+                  'Technical and operational health data from stations, connectors, OCPP messages, faults, and meter values.',
+              },
+              {
+                icon: TriangleAlert,
+                title: 'Emergency Access',
+                description:
+                  'Break-glass access for real incidents: time-boxed, heavily logged, and never silent.',
+              },
+            ],
+          },
+          {
+            title: 'Access Control',
+            items: [
+              {
+                icon: ShieldCheck,
+                title: 'Rights & Roles',
+                description: '',
+              },
+              {
+                icon: Users,
+                title: 'User Roles',
+                description: '',
+              },
+            ],
+          },
+          {
+            title: 'Platform Operations',
+            items: [
+              {
+                icon: Building2,
+                title: 'Tenant / Operator Management',
+                description: '',
+              },
+              {
+                icon: Cpu,
+                title: 'Firmware',
+                description: '',
+              },
+              {
+                icon: SlidersHorizontal,
+                title: 'System Configuration',
+                description: '',
+              },
+            ],
+          },
+          {
+            title: 'Tariff',
+            highlight: true,
+            items: [
+              {
+                icon: CircleDollarSign,
+                title: 'Tariffs',
+                description:
+                  'Full pricing authority. Sets and changes rates directly with confirmation step and audit log on every change, no separate approver.',
+              },
+            ],
+          },
+        ],
+      },
+      {
+        id: 'operator',
+        scope: 'Organization-Wide',
+        title: 'Operator',
+        description:
+          'Single role for day-to-day operations, no pricing authority.',
+        headerClassName: 'bg-[#082f5f] text-blue-200',
+        sections: [
+          {
+            title: 'Daily Operations',
+            items: [
+              {
+                icon: ReceiptText,
+                title: 'Transactions',
+                description: '',
+              },
+              {
+                icon: BarChart3,
+                title: 'Reporting & Analytics',
+                description: '',
+              },
+            ],
+          },
+          {
+            title: 'Fleet Setup',
+            items: [
+              {
+                icon: Building2,
+                title: 'Station Management',
+                description: '',
+              },
+              {
+                icon: MapPin,
+                title: 'Location Management',
+                description: '',
+              },
+            ],
+          },
+          {
+            title: 'People & Access',
+            items: [
+              {
+                icon: ClipboardCheck,
+                title: 'RFID / Authorization Lists',
+                description: '',
+              },
+              {
+                icon: UserCog,
+                title: 'Team Members',
+                description:
+                  'Organization-level authorization: invite/remove staff within their own org, from Super Admin-approved role templates.',
+              },
+            ],
+          },
+        ],
+      },
+      {
+        id: 'station',
+        scope: 'Device-Level',
+        title: 'Station',
+        description:
+          'Fixed default profile, not configurable per user. Staff turn over frequently.',
+        headerClassName: 'bg-[#123510] text-green-300',
+        callout: 'Fixed permission set',
+        sections: [
+          {
+            title: 'Live Status',
+            items: [
+              {
+                icon: Zap,
+                title: 'Station Status',
+                description: '',
+              },
+              {
+                icon: Plug,
+                title: 'Connectors',
+                description: '',
+              },
+              {
+                icon: Clock3,
+                title: 'Sessions',
+                description: '',
+              },
+            ],
+          },
+          {
+            title: 'Diagnostics & Config',
+            items: [
+              {
+                icon: FileText,
+                title: 'Diagnostics / Logs',
+                description: '',
+              },
+              {
+                icon: SlidersHorizontal,
+                title: 'Configuration Keys',
+                description: 'View only, editing requires Operator escalation.',
+              },
+            ],
+          },
+        ],
+      },
+    ],
+    [],
+  );
+
+  const selectedRoleParam = searchParams.get('role') ?? 'super-admin';
+  const selectedSectionParam = searchParams.get('section') ?? 'tariff';
+  const [selectedRoleIndex, setSelectedRoleIndex] = useState(() => {
+    const roleIndex = roleMatrix.findIndex(
+      (role) => role.id === selectedRoleParam,
+    );
+    return roleIndex >= 0 ? roleIndex : 0;
+  });
+  const selectedRole = roleMatrix[selectedRoleIndex];
+
+  useEffect(() => {
+    const roleIndex = roleMatrix.findIndex(
+      (role) => role.id === selectedRoleParam,
+    );
+    setSelectedRoleIndex(roleIndex >= 0 ? roleIndex : 0);
+  }, [roleMatrix, selectedRoleParam]);
+
+  useEffect(() => {
+    setShowTariffForm(false);
+  }, [selectedSectionParam]);
+
+  const getSectionSlug = (sectionTitle: string) =>
+    sectionTitle.toLowerCase().replace(/&/g, 'and').replace(/\s+/g, '-');
+
+  const getItemSlug = (itemTitle: string) =>
+    itemTitle
+      .toLowerCase()
+      .replace(/\//g, '')
+      .replace(/&/g, 'and')
+      .replace(/\s+/g, '-');
+
+  const selectedRoleSection =
+    selectedRole.sections.find(
+      (section) => getSectionSlug(section.title) === selectedSectionParam,
+    ) ?? selectedRole.sections[0];
+  const selectedActionParam =
+    searchParams.get('action') ??
+    getItemSlug(selectedRoleSection.items[0].title);
+
+  const isTariffSection =
+    selectedRole.id === 'super-admin' &&
+    getSectionSlug(selectedRoleSection.title) === 'tariff';
+  const isAuditActivity =
+    selectedRole.id === 'super-admin' &&
+    getSectionSlug(selectedRoleSection.title) === 'oversight' &&
+    selectedActionParam === 'audit-activity';
+  const isDiagnosticsLogs =
+    selectedRole.id === 'super-admin' &&
+    getSectionSlug(selectedRoleSection.title) === 'oversight' &&
+    selectedActionParam === 'diagnostics-logs';
+  const isEmergencyAccess =
+    selectedRole.id === 'super-admin' &&
+    getSectionSlug(selectedRoleSection.title) === 'oversight' &&
+    selectedActionParam === 'emergency-access';
+  const isUserRoles =
+    selectedRole.id === 'super-admin' &&
+    getSectionSlug(selectedRoleSection.title) === 'access-control' &&
+    selectedActionParam === 'user-roles';
+  const isRightsRoles =
+    selectedRole.id === 'super-admin' &&
+    getSectionSlug(selectedRoleSection.title) === 'access-control' &&
+    selectedActionParam === 'rights-and-roles';
+  const isOperatorPortal = selectedRole.id === 'operator';
+  const isOperatorAnalytics =
+    selectedRole.id === 'operator' &&
+    selectedActionParam === 'reporting-and-analytics';
+  const isStationDashboard = selectedRole.id === 'station';
+
+  const tariffHistory = [
+    {
+      date: '2026-06-18',
+      time: '09:30',
+      rate: '$0.42 / kWh',
+      details: 'Peak-hour public charging tariff update',
+      note: 'Aligned with revised energy procurement cost.',
+    },
+    {
+      date: '2026-05-02',
+      time: '14:15',
+      rate: '$0.38 / kWh',
+      details: 'Standard DC fast charging rate adjustment',
+      note: 'Seasonal demand and operator margin review.',
+    },
+    {
+      date: '2026-03-21',
+      time: '11:00',
+      rate: '$0.34 / kWh',
+      details: 'Baseline network tariff published',
+      note: 'Initial platform pricing policy.',
+    },
+  ];
+
+  const auditLogs = [
+    {
+      date: '2026-06-30',
+      time: '15:42',
+      user: 'Admin User',
+      activity: 'Changed tariff rate',
+      resource: 'Network pricing policy',
+      result: 'Completed',
+    },
+    {
+      date: '2026-06-30',
+      time: '14:18',
+      user: 'System Super User',
+      activity: 'Reviewed operator access',
+      resource: 'Operator permissions',
+      result: 'Completed',
+    },
+    {
+      date: '2026-06-29',
+      time: '18:05',
+      user: 'Admin User',
+      activity: 'Generated diagnostic report',
+      resource: 'Charging station logs',
+      result: 'Completed',
+    },
+    {
+      date: '2026-06-28',
+      time: '10:27',
+      user: 'System Super User',
+      activity: 'Emergency access opened',
+      resource: 'Incident response',
+      result: 'Time-boxed',
+    },
+  ];
+
+  const diagnosticLogs = [
+    {
+      time: '2026-06-30 15:55',
+      station: 'PK-KHI-DC-018',
+      signal: 'Connector fault',
+      detail: 'Ground fault detected on connector 2',
+      severity: 'High',
+    },
+    {
+      time: '2026-06-30 15:38',
+      station: 'PK-LHE-AC-044',
+      signal: 'Connection status',
+      detail: 'Station reconnected to CSMS after heartbeat timeout',
+      severity: 'Medium',
+    },
+    {
+      time: '2026-06-30 14:22',
+      station: 'PK-ISB-DC-006',
+      signal: 'Meter value',
+      detail: 'Abnormal meter value spike during active session',
+      severity: 'Review',
+    },
+  ];
+
+  const emergencyAccessEvents = [
+    {
+      opened: '2026-06-28 10:27',
+      requester: 'System Super User',
+      grantedTo: 'Amran',
+      reason: 'Lock down compromised operator account',
+      expires: '2026-06-28 11:27',
+      status: 'Expired',
+    },
+    {
+      opened: '2026-06-15 02:14',
+      requester: 'Admin User',
+      grantedTo: 'Station Response Lead',
+      reason: 'Critical station override during outage response',
+      expires: '2026-06-15 03:14',
+      status: 'Logged',
+    },
+  ];
+
+  const emergencyEligiblePeople = [
+    {
+      name: 'Amran',
+      seniorRole: 'System Super User',
+      scope: 'Platform-wide incident response',
+      approvalBasis: 'Named break-glass authority',
+      status: 'Eligible',
+    },
+    {
+      name: 'Admin User',
+      seniorRole: 'Security Administrator',
+      scope: 'User lockout and account compromise',
+      approvalBasis: 'Security response owner',
+      status: 'Eligible',
+    },
+    {
+      name: 'Station Response Lead',
+      seniorRole: 'Network Operations Lead',
+      scope: 'Critical station fault override',
+      approvalBasis: 'Operational escalation owner',
+      status: 'Eligible',
+    },
+  ];
+
+  const users = [
+    {
+      name: 'Amran',
+      email: 'amran@voltaris.energy',
+      role: 'System Super User',
+      status: 'Active',
+      lastLogin: '2026-06-30 18:42',
+    },
+    {
+      name: 'Admin User',
+      email: 'admin@voltaris.energy',
+      role: 'Security Administrator',
+      status: 'Active',
+      lastLogin: '2026-06-30 15:18',
+    },
+    {
+      name: 'Station Response Lead',
+      email: 'response@voltaris.energy',
+      role: 'Network Operations Lead',
+      status: 'Invited',
+      lastLogin: 'Pending',
+    },
+  ];
+
+  const accessControlActions = [
+    ActionType.LIST,
+    ActionType.SHOW,
+    ActionType.CREATE,
+    ActionType.EDIT,
+    ActionType.DELETE,
+    ActionType.ACCESS,
+    ActionType.COMMAND,
+  ];
+
+  const rolePermissionRows = ACCESS_CONTROL_ROLE_OPTIONS.map((role) => ({
+    role,
+    permissions: ROLE_PERMISSIONS[role as keyof typeof ROLE_PERMISSIONS],
+  }));
+
+  const operatorMetrics = [
+    {
+      label: 'Online Stations',
+      value: '118',
+      detail: '94% available',
+    },
+    {
+      label: 'Active Sessions',
+      value: '42',
+      detail: '16 DC fast charging',
+    },
+    {
+      label: 'Energy Today',
+      value: '8.7 MWh',
+      detail: '+12% vs yesterday',
+    },
+    {
+      label: 'Revenue Today',
+      value: '$3,480',
+      detail: 'Settled and pending',
+    },
+  ];
+
+  const operatorStationHealth = [
+    {
+      station: 'PK-KHI-DC-018',
+      location: 'Karachi Central',
+      status: 'Online',
+      connectors: '4 / 4',
+      alert: 'Healthy',
+    },
+    {
+      station: 'PK-LHE-AC-044',
+      location: 'Lahore Ring Road',
+      status: 'Attention',
+      connectors: '5 / 6',
+      alert: 'Heartbeat delay',
+    },
+    {
+      station: 'PK-ISB-DC-006',
+      location: 'Islamabad Blue Area',
+      status: 'Online',
+      connectors: '2 / 2',
+      alert: 'Meter spike under review',
+    },
+  ];
+
+  const operatorWorkflows = [
+    'Review station incidents',
+    'Export daily transactions',
+    'Assign field maintenance',
+    'Invite team member',
+  ];
+
+  const operatorTimeseries = [
+    { time: '00:00', energy: 1.2, revenue: 420, sessions: 10, failures: 1, reconnects: 0 },
+    { time: '04:00', energy: 0.8, revenue: 290, sessions: 7, failures: 0, reconnects: 1 },
+    { time: '08:00', energy: 2.6, revenue: 880, sessions: 21, failures: 2, reconnects: 1 },
+    { time: '12:00', energy: 3.9, revenue: 1320, sessions: 34, failures: 1, reconnects: 2 },
+    { time: '16:00', energy: 5.1, revenue: 1780, sessions: 47, failures: 3, reconnects: 1 },
+    { time: '20:00', energy: 4.4, revenue: 1510, sessions: 39, failures: 1, reconnects: 2 },
+  ];
+
+  const operatorUtilization = [
+    { location: 'Karachi', utilization: 82 },
+    { location: 'Lahore', utilization: 74 },
+    { location: 'Islamabad', utilization: 68 },
+    { location: 'Multan', utilization: 53 },
+    { location: 'Peshawar', utilization: 41 },
+  ];
+
+  const operatorAlerts = [
+    {
+      time: '15:55',
+      source: 'PK-KHI-DC-018',
+      signal: 'Connector fault',
+      severity: 'Critical',
+    },
+    {
+      time: '15:38',
+      source: 'PK-LHE-AC-044',
+      signal: 'Heartbeat delay',
+      severity: 'Warning',
+    },
+    {
+      time: '14:22',
+      source: 'PK-ISB-DC-006',
+      signal: 'Meter spike',
+      severity: 'Review',
+    },
+  ];
+
+  const operatorFailureEvents = [
+    {
+      time: '16:18',
+      station: 'PK-KHI-DC-018',
+      type: 'Transaction Failure',
+      detail: 'Authorize accepted, StartTransaction timeout',
+      status: 'Investigating',
+    },
+    {
+      time: '15:42',
+      station: 'PK-LHE-AC-044',
+      type: 'Reconnect',
+      detail: 'Station reconnected after 2 missed heartbeats',
+      status: 'Recovered',
+    },
+    {
+      time: '13:09',
+      station: 'PK-ISB-DC-006',
+      type: 'Transaction Failure',
+      detail: 'Payment capture failed before session start',
+      status: 'Retry queued',
+    },
+    {
+      time: '09:31',
+      station: 'PK-MUX-AC-012',
+      type: 'Reconnect',
+      detail: 'OCPP websocket restored',
+      status: 'Recovered',
+    },
+  ];
+
+  const timeseriesChartConfig = {
+    energy: {
+      label: 'Energy',
+      color: '#22c55e',
+    },
+    revenue: {
+      label: 'Revenue',
+      color: '#f59e0b',
+    },
+    sessions: {
+      label: 'Sessions',
+      color: '#26002e',
+    },
+    failures: {
+      label: 'Failures',
+      color: '#ef4444',
+    },
+    reconnects: {
+      label: 'Reconnects',
+      color: '#3b82f6',
+    },
+  } satisfies ChartConfig;
+
+  const utilizationChartConfig = {
+    utilization: {
+      label: 'Utilization',
+      color: '#26002e',
+    },
+  } satisfies ChartConfig;
+
+  const stationMetrics = [
+    {
+      label: 'Station Status',
+      value: 'Online',
+      detail: 'Last heartbeat 12 sec ago',
+    },
+    {
+      label: 'Connector Availability',
+      value: '2 / 3',
+      detail: '1 connector requires attention',
+    },
+    {
+      label: 'Current Session',
+      value: '18.4 kWh',
+      detail: 'EV-7741 on connector 1',
+    },
+    {
+      label: 'Power Draw',
+      value: '62 kW',
+      detail: 'Temperature 36 C',
+    },
+  ];
+
+  const stationLoadSeries = [
+    { time: '10:00', power: 18, temperature: 31, sessions: 1 },
+    { time: '11:00', power: 44, temperature: 33, sessions: 2 },
+    { time: '12:00', power: 58, temperature: 35, sessions: 2 },
+    { time: '13:00', power: 62, temperature: 36, sessions: 1 },
+    { time: '14:00', power: 50, temperature: 35, sessions: 1 },
+    { time: '15:00', power: 67, temperature: 37, sessions: 2 },
+  ];
+
+  const stationConnectors = [
+    {
+      connector: 'Connector 1',
+      type: 'DC CCS',
+      status: 'Charging',
+      power: '62 kW',
+      detail: 'EV-7741 active',
+    },
+    {
+      connector: 'Connector 2',
+      type: 'DC CCS',
+      status: 'Available',
+      power: '0 kW',
+      detail: 'Ready for session',
+    },
+    {
+      connector: 'Connector 3',
+      type: 'Type 2',
+      status: 'Faulted',
+      power: '0 kW',
+      detail: 'Ground fault detected',
+    },
+  ];
+
+  const stationSessions = [
+    {
+      time: '15:18',
+      user: 'RFID-2048',
+      connector: 'Connector 1',
+      energy: '18.4 kWh',
+      status: 'Charging',
+    },
+    {
+      time: '14:42',
+      user: 'App session',
+      connector: 'Connector 2',
+      energy: '26.1 kWh',
+      status: 'Completed',
+    },
+    {
+      time: '13:55',
+      user: 'RFID-1182',
+      connector: 'Connector 3',
+      energy: '0.0 kWh',
+      status: 'Failed start',
+    },
+  ];
+
+  const stationDiagnostics = [
+    ['Heartbeat', 'Healthy', '12 sec ago'],
+    ['OCPP Latency', 'Normal', '48 ms'],
+    ['Meter Sample', 'Streaming', 'Every 30 sec'],
+    ['Firmware', 'Up to date', 'v2.9.4'],
+    ['Config Access', 'View only', 'Operator escalation required'],
+  ];
+
+  const stationLoadChartConfig = {
+    power: {
+      label: 'Power',
+      color: '#22c55e',
+    },
+    temperature: {
+      label: 'Temperature',
+      color: '#f59e0b',
+    },
+    sessions: {
+      label: 'Sessions',
+      color: '#3b82f6',
+    },
+  } satisfies ChartConfig;
+
+  const updateTariffForm =
+    (field: keyof typeof tariffForm) =>
+    (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      setTariffForm((currentForm) => ({
+        ...currentForm,
+        [field]: event.target.value,
+      }));
+    };
+
+  const updateEmergencyAccessForm =
+    (field: keyof typeof emergencyAccessForm) =>
+    (
+      event: ChangeEvent<
+        HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement
+      >,
+    ) => {
+      setEmergencyAccessForm((currentForm) => ({
+        ...currentForm,
+        [field]: event.target.value,
+      }));
+    };
+
+  const updateCreateUserForm =
+    (field: keyof typeof createUserForm) =>
+    (
+      event: ChangeEvent<
+        HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement
+      >,
+    ) => {
+      setCreateUserForm((currentForm) => ({
+        ...currentForm,
+        [field]: event.target.value,
+      }));
+    };
+
+  const tariffHistoryList = (
+    <div className="border-t border-white/10 bg-[#f8f7f4] p-5 text-foreground">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className={heading2Style}>Tariff History</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Review all recorded tariff changes and pricing audit notes.
+          </p>
+        </div>
+        <Button
+          type="button"
+          className="sm:self-start"
+          onClick={() => setShowTariffForm(true)}
+        >
+          Change Tariff
+        </Button>
+      </div>
+
+      <div className="mt-5 overflow-hidden rounded-md border border-border bg-background">
+        <DataTable>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Date of Change</TableHead>
+              <TableHead>Time</TableHead>
+              <TableHead>Current Rate</TableHead>
+              <TableHead>Change Details</TableHead>
+              <TableHead>Note</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {tariffHistory.map((change) => (
+              <TableRow key={`${change.date}-${change.time}`}>
+                <TableCell>{change.date}</TableCell>
+                <TableCell>{change.time}</TableCell>
+                <TableCell>{change.rate}</TableCell>
+                <TableCell>{change.details}</TableCell>
+                <TableCell className="whitespace-normal text-muted-foreground">
+                  {change.note}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </DataTable>
+      </div>
+    </div>
+  );
+
+  const tariffChangeForm = (
+    <div className="border-t border-white/10 bg-[#f8f7f4] p-5 text-foreground">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className={heading2Style}>Change Tariff</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Set the pricing change record for review and audit.
+          </p>
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          className="sm:self-start"
+          onClick={() => setShowTariffForm(false)}
+        >
+          Back to History
+        </Button>
+      </div>
+
+      <form className="mt-5 grid gap-4 md:grid-cols-2">
+        <div className="space-y-2">
+          <Label htmlFor="tariff-change-date">Date of Change</Label>
+          <Input
+            id="tariff-change-date"
+            type="date"
+            value={tariffForm.changeDate}
+            onChange={updateTariffForm('changeDate')}
+          />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="tariff-change-time">Time of Change</Label>
+          <Input
+            id="tariff-change-time"
+            type="time"
+            value={tariffForm.changeTime}
+            onChange={updateTariffForm('changeTime')}
+          />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="tariff-current-rate">Current Rate</Label>
+          <Input
+            id="tariff-current-rate"
+            type="number"
+            min="0"
+            step="0.01"
+            placeholder="0.00"
+            value={tariffForm.currentRate}
+            onChange={updateTariffForm('currentRate')}
+          />
+        </div>
+        <div className="space-y-2 md:col-span-2">
+          <Label htmlFor="tariff-change-details">Change Details</Label>
+          <Textarea
+            id="tariff-change-details"
+            className="min-h-28"
+            placeholder="Describe the tariff change and scope."
+            value={tariffForm.changeDetails}
+            onChange={updateTariffForm('changeDetails')}
+          />
+        </div>
+        <div className="space-y-2 md:col-span-2">
+          <Label htmlFor="tariff-change-note">
+            Note: Why This Change Was Made
+          </Label>
+          <Textarea
+            id="tariff-change-note"
+            className="min-h-24"
+            placeholder="Add the business reason, approval context, or operational trigger for this change."
+            value={tariffForm.changeNote}
+            onChange={updateTariffForm('changeNote')}
+          />
+        </div>
+        <div className="flex justify-end gap-2 md:col-span-2">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => setShowTariffForm(false)}
+          >
+            Cancel
+          </Button>
+          <Button type="button">Save Change</Button>
+        </div>
+      </form>
+    </div>
+  );
+
+  const auditActivityList = (
+    <div className="flex min-w-0 flex-col gap-4 rounded-md border border-border bg-card p-5 shadow-sm">
+      <div>
+        <h2 className={heading2Style}>Audit Activity</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Permanent append-only evidence of who did what, when, across the
+          platform. This settles pricing, role, approval, and access disputes.
+        </p>
+      </div>
+
+      <div className="overflow-hidden rounded-md border border-border bg-background">
+        <DataTable>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Date</TableHead>
+              <TableHead>Time</TableHead>
+              <TableHead>User</TableHead>
+              <TableHead>Activity</TableHead>
+              <TableHead>Resource</TableHead>
+              <TableHead>Result</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {auditLogs.map((log) => (
+              <TableRow key={`${log.date}-${log.time}-${log.activity}`}>
+                <TableCell>{log.date}</TableCell>
+                <TableCell>{log.time}</TableCell>
+                <TableCell>{log.user}</TableCell>
+                <TableCell>{log.activity}</TableCell>
+                <TableCell>{log.resource}</TableCell>
+                <TableCell>{log.result}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </DataTable>
+      </div>
+    </div>
+  );
+
+  const diagnosticsLogsList = (
+    <div className="flex min-w-0 flex-col gap-4 rounded-md border border-border bg-card p-5 shadow-sm">
+      <div>
+        <h2 className={heading2Style}>Diagnostics / Logs</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Technical health data from stations and OCPP messages: faults, meter
+          values, connection status, firmware behavior, and abnormal readings.
+        </p>
+      </div>
+
+      <div className="overflow-hidden rounded-md border border-border bg-background">
+        <DataTable>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Time</TableHead>
+              <TableHead>Station</TableHead>
+              <TableHead>Signal</TableHead>
+              <TableHead>Detail</TableHead>
+              <TableHead>Severity</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {diagnosticLogs.map((log) => (
+              <TableRow key={`${log.time}-${log.station}-${log.signal}`}>
+                <TableCell>{log.time}</TableCell>
+                <TableCell>{log.station}</TableCell>
+                <TableCell>{log.signal}</TableCell>
+                <TableCell className="whitespace-normal">
+                  {log.detail}
+                </TableCell>
+                <TableCell>{log.severity}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </DataTable>
+      </div>
+    </div>
+  );
+
+  const emergencyAccessList = (
+    <div className="flex min-w-0 flex-col gap-4 rounded-md border border-border bg-card p-5 shadow-sm">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className={heading2Style}>Emergency Access</h2>
+        </div>
+        <Button
+          type="button"
+          className="sm:self-start"
+          onClick={() => setShowEmergencyAccessForm(true)}
+        >
+          Grant Emergency Access
+        </Button>
+      </div>
+
+      {showEmergencyAccessForm && (
+        <form className="grid gap-4 rounded-md border border-border bg-background p-4 md:grid-cols-2">
+          <div className="space-y-2">
+            <Label htmlFor="emergency-access-person">Eligible User</Label>
+            <select
+              id="emergency-access-person"
+              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              value={emergencyAccessForm.grantedTo}
+              onChange={updateEmergencyAccessForm('grantedTo')}
+            >
+              <option value="">Select eligible user</option>
+              {emergencyEligiblePeople.map((person) => (
+                <option key={person.name} value={person.name}>
+                  {person.name} - {person.seniorRole}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="emergency-access-start">Start Time</Label>
+            <Input
+              id="emergency-access-start"
+              type="datetime-local"
+              value={emergencyAccessForm.startTime}
+              onChange={updateEmergencyAccessForm('startTime')}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="emergency-access-end">End Time</Label>
+            <Input
+              id="emergency-access-end"
+              type="datetime-local"
+              value={emergencyAccessForm.endTime}
+              onChange={updateEmergencyAccessForm('endTime')}
+            />
+          </div>
+          <div className="space-y-2 md:col-span-2">
+            <Label htmlFor="emergency-access-note">
+              Note: Why Access Was Granted
+            </Label>
+            <Textarea
+              id="emergency-access-note"
+              className="min-h-24"
+              placeholder="Describe the incident, why normal permissions are not enough, and who approved this emergency access."
+              value={emergencyAccessForm.note}
+              onChange={updateEmergencyAccessForm('note')}
+            />
+          </div>
+          <div className="flex justify-end gap-2 md:col-span-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setShowEmergencyAccessForm(false)}
+            >
+              Cancel
+            </Button>
+            <Button type="button">Grant Access</Button>
+          </div>
+        </form>
+      )}
+
+      <div className="overflow-hidden rounded-md border border-border bg-background">
+        <DataTable>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Eligible Senior Person</TableHead>
+              <TableHead>Senior Role</TableHead>
+              <TableHead>Emergency Scope</TableHead>
+              <TableHead>Approval Basis</TableHead>
+              <TableHead>Status</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {emergencyEligiblePeople.map((person) => (
+              <TableRow key={person.name}>
+                <TableCell>{person.name}</TableCell>
+                <TableCell>{person.seniorRole}</TableCell>
+                <TableCell className="whitespace-normal">
+                  {person.scope}
+                </TableCell>
+                <TableCell className="whitespace-normal">
+                  {person.approvalBasis}
+                </TableCell>
+                <TableCell>{person.status}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </DataTable>
+      </div>
+
+      <div className="overflow-hidden rounded-md border border-border bg-background">
+        <DataTable>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Opened</TableHead>
+              <TableHead>Requester</TableHead>
+              <TableHead>Granted To</TableHead>
+              <TableHead>Reason</TableHead>
+              <TableHead>Expires</TableHead>
+              <TableHead>Status</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {emergencyAccessEvents.map((event) => (
+              <TableRow key={`${event.opened}-${event.requester}`}>
+                <TableCell>{event.opened}</TableCell>
+                <TableCell>{event.requester}</TableCell>
+                <TableCell>{event.grantedTo}</TableCell>
+                <TableCell className="whitespace-normal">
+                  {event.reason}
+                </TableCell>
+                <TableCell>{event.expires}</TableCell>
+                <TableCell>{event.status}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </DataTable>
+      </div>
+    </div>
+  );
+
+  const userRolesList = (
+    <div className="flex min-w-0 flex-col gap-4 rounded-md border border-border bg-card p-5 shadow-sm">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className={heading2Style}>View Users</h2>
+        </div>
+        <Button
+          type="button"
+          className="sm:self-start"
+          onClick={() => setShowCreateUserForm(true)}
+        >
+          <Plus className={buttonIconSize} />
+          Create User
+        </Button>
+      </div>
+
+      {showCreateUserForm && (
+        <form className="grid gap-4 rounded-md border border-border bg-background p-4 md:grid-cols-2">
+          <div className="space-y-2">
+            <Label htmlFor="create-user-name">Name</Label>
+            <Input
+              id="create-user-name"
+              placeholder="Full name"
+              value={createUserForm.name}
+              onChange={updateCreateUserForm('name')}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="create-user-email">Email</Label>
+            <Input
+              id="create-user-email"
+              type="email"
+              placeholder="user@voltaris.energy"
+              value={createUserForm.email}
+              onChange={updateCreateUserForm('email')}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="create-user-role">User Role</Label>
+            <select
+              id="create-user-role"
+              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              value={createUserForm.userRole}
+              onChange={updateCreateUserForm('userRole')}
+            >
+              <option value="">Select user role</option>
+              {ACCESS_CONTROL_ROLE_OPTIONS.map((role) => (
+                <option key={role} value={role}>
+                  {role}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="create-user-scope">Scope</Label>
+            <select
+              id="create-user-scope"
+              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              value={createUserForm.scope}
+              onChange={updateCreateUserForm('scope')}
+            >
+              <option value="">Select access scope</option>
+              {ACCESS_CONTROL_SCOPES.map((scope) => (
+                <option key={scope} value={scope}>
+                  {scope}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="space-y-2 md:col-span-2">
+            <Label htmlFor="create-user-note">Access Note</Label>
+            <Textarea
+              id="create-user-note"
+              className="min-h-24"
+              placeholder="Add approval context, assigned operator or station, and any restrictions."
+              value={createUserForm.note}
+              onChange={updateCreateUserForm('note')}
+            />
+          </div>
+          <div className="flex justify-end gap-2 md:col-span-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setShowCreateUserForm(false)}
+            >
+              Cancel
+            </Button>
+            <Button type="button">Save User</Button>
+          </div>
+        </form>
+      )}
+
+      <div className="overflow-hidden rounded-md border border-border bg-background">
+        <DataTable>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Name</TableHead>
+              <TableHead>Email</TableHead>
+              <TableHead>Role</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead>Last Login</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {users.map((user) => (
+              <TableRow key={user.email}>
+                <TableCell>{user.name}</TableCell>
+                <TableCell>{user.email}</TableCell>
+                <TableCell>{user.role}</TableCell>
+                <TableCell>{user.status}</TableCell>
+                <TableCell>{user.lastLogin}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </DataTable>
+      </div>
+    </div>
+  );
+
+  const rightsRolesList = (
+    <div className="flex min-w-0 flex-col gap-4 rounded-md border border-border bg-card p-5 shadow-sm">
+      <div>
+        <h2 className={heading2Style}>Rights & Roles</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Permission matrix loaded from the active Refine access-control
+          provider.
+        </p>
+      </div>
+
+      <div className="overflow-hidden rounded-md border border-border bg-background">
+        <DataTable>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Role</TableHead>
+              {accessControlActions.map((action) => (
+                <TableHead key={action} className="text-center capitalize">
+                  {action}
+                </TableHead>
+              ))}
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rolePermissionRows.map((row) => (
+              <TableRow key={row.role}>
+                <TableCell className="font-medium">{row.role}</TableCell>
+                {accessControlActions.map((action) => {
+                  const allowed = row.permissions[action];
+                  return (
+                    <TableCell key={action} className="text-center">
+                      <span
+                        className={`inline-flex min-w-16 justify-center rounded-md px-2 py-1 text-xs font-medium ${
+                          allowed
+                            ? 'bg-green-100 text-green-700'
+                            : 'bg-muted text-muted-foreground'
+                        }`}
+                      >
+                        {allowed ? 'Allowed' : 'Blocked'}
+                      </span>
+                    </TableCell>
+                  );
+                })}
+              </TableRow>
+            ))}
+          </TableBody>
+        </DataTable>
+      </div>
+    </div>
+  );
+
+  const operatorPortal = (
+    <div className="flex min-w-0 flex-col gap-5">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        {operatorMetrics.map((metric) => (
+          <div
+            key={metric.label}
+            className="rounded-md border border-border bg-card p-5 shadow-sm"
+          >
+            <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
+              {metric.label}
+            </p>
+            <p className="mt-2 text-3xl font-semibold text-foreground">
+              {metric.value}
+            </p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {metric.detail}
+            </p>
+          </div>
+        ))}
+      </div>
+
+      <div className="grid gap-5 xl:grid-cols-[1.35fr_0.65fr]">
+        <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className={heading2Style}>Station Operations</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Live e-mobility view for stations, connectors, active sessions,
+                and field attention.
+              </p>
+            </div>
+            <Button type="button" variant="outline" className="sm:self-start">
+              Export Report
+            </Button>
+          </div>
+
+          <div className="mt-5 overflow-hidden rounded-md border border-border bg-background">
+            <DataTable>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Station</TableHead>
+                  <TableHead>Location</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Connectors</TableHead>
+                  <TableHead>Alert</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {operatorStationHealth.map((station) => (
+                  <TableRow key={station.station}>
+                    <TableCell className="font-medium">
+                      {station.station}
+                    </TableCell>
+                    <TableCell>{station.location}</TableCell>
+                    <TableCell>
+                      <span
+                        className={`rounded-md px-2 py-1 text-xs font-medium ${
+                          station.status === 'Online'
+                            ? 'bg-green-100 text-green-700'
+                            : 'bg-amber-100 text-amber-700'
+                        }`}
+                      >
+                        {station.status}
+                      </span>
+                    </TableCell>
+                    <TableCell>{station.connectors}</TableCell>
+                    <TableCell>{station.alert}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </DataTable>
+          </div>
+        </div>
+
+        <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+          <h2 className={heading2Style}>Operator Workflows</h2>
+          <div className="mt-4 flex flex-col gap-2">
+            {operatorWorkflows.map((workflow) => (
+              <Button
+                key={workflow}
+                type="button"
+                variant="outline"
+                className="justify-start"
+              >
+                {workflow}
+              </Button>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  const operatorAnalyticsDashboard = (
+    <div className="flex min-w-0 flex-col gap-5">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        {[
+          ['Network Uptime', '99.2%', 'Last 24 hours'],
+          ['Peak Load', '742 kW', '16:20 today'],
+          ['Transaction Failures', '8', '3 require review'],
+          ['Reconnects', '7', '5 recovered automatically'],
+        ].map(([label, value, detail]) => (
+          <div
+            key={label}
+            className="rounded-md border border-border bg-[#171717] p-5 text-white shadow-sm"
+          >
+            <p className="text-xs font-medium uppercase tracking-[0.18em] text-white/60">
+              {label}
+            </p>
+            <p className="mt-2 text-3xl font-semibold">{value}</p>
+            <p className="mt-1 text-sm text-white/60">{detail}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="grid gap-5 xl:grid-cols-[1.35fr_0.65fr]">
+        <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h2 className={heading2Style}>Energy, Revenue & Sessions</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Live operator analytics for usage, transaction failures, and
+                station reconnects.
+              </p>
+            </div>
+            <div className="rounded-md border border-border bg-background px-3 py-2 text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
+              Last 24h
+            </div>
+          </div>
+          <ChartContainer
+            config={timeseriesChartConfig}
+            className="mt-4 h-72 w-full"
+          >
+            <LineChart data={operatorTimeseries} margin={{ left: 12, right: 12 }}>
+              <CartesianGrid vertical={false} />
+              <XAxis dataKey="time" tickLine={false} axisLine={false} />
+              <YAxis tickLine={false} axisLine={false} />
+              <ChartTooltip content={<ChartTooltipContent />} />
+              <Line
+                type="monotone"
+                dataKey="energy"
+                stroke="var(--color-energy)"
+                strokeWidth={2}
+                dot={false}
+              />
+              <Line
+                type="monotone"
+                dataKey="sessions"
+                stroke="var(--color-sessions)"
+                strokeWidth={2}
+                dot={false}
+              />
+              <Line
+                type="monotone"
+                dataKey="revenue"
+                stroke="var(--color-revenue)"
+                strokeWidth={2}
+                dot={false}
+              />
+              <Line
+                type="monotone"
+                dataKey="failures"
+                stroke="var(--color-failures)"
+                strokeWidth={2}
+                dot={false}
+              />
+              <Line
+                type="monotone"
+                dataKey="reconnects"
+                stroke="var(--color-reconnects)"
+                strokeWidth={2}
+                dot={false}
+              />
+            </LineChart>
+          </ChartContainer>
+        </div>
+
+        <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+          <h2 className={heading2Style}>Location Utilization</h2>
+          <ChartContainer
+            config={utilizationChartConfig}
+            className="mt-4 h-72 w-full"
+          >
+            <RechartsBarChart
+              data={operatorUtilization}
+              margin={{ left: 8, right: 8 }}
+            >
+              <CartesianGrid vertical={false} />
+              <XAxis dataKey="location" tickLine={false} axisLine={false} />
+              <YAxis tickLine={false} axisLine={false} />
+              <ChartTooltip content={<ChartTooltipContent />} />
+              <Bar
+                dataKey="utilization"
+                fill="var(--color-utilization)"
+                radius={4}
+              />
+            </RechartsBarChart>
+          </ChartContainer>
+        </div>
+      </div>
+
+      <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+        <h2 className={heading2Style}>Transaction Failures & Reconnects</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Operator incident stream for failed session starts, payment issues,
+          heartbeat loss, and OCPP websocket recovery.
+        </p>
+        <div className="mt-4 overflow-hidden rounded-md border border-border bg-background">
+          <DataTable>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Time</TableHead>
+                <TableHead>Station</TableHead>
+                <TableHead>Type</TableHead>
+                <TableHead>Detail</TableHead>
+                <TableHead>Status</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {operatorFailureEvents.map((event) => (
+                <TableRow key={`${event.time}-${event.station}-${event.type}`}>
+                  <TableCell>{event.time}</TableCell>
+                  <TableCell>{event.station}</TableCell>
+                  <TableCell>
+                    <span
+                      className={`rounded-md px-2 py-1 text-xs font-medium ${
+                        event.type === 'Reconnect'
+                          ? 'bg-blue-100 text-blue-700'
+                          : 'bg-red-100 text-red-700'
+                      }`}
+                    >
+                      {event.type}
+                    </span>
+                  </TableCell>
+                  <TableCell className="whitespace-normal">
+                    {event.detail}
+                  </TableCell>
+                  <TableCell>{event.status}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </DataTable>
+        </div>
+      </div>
+
+      <div className="grid gap-5 xl:grid-cols-[0.85fr_1.15fr]">
+        <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+          <h2 className={heading2Style}>Network Status</h2>
+          <div className="mt-4 grid gap-3">
+            {[
+              ['CSMS API', 'Healthy', '42 ms'],
+              ['OCPP Gateway', 'Healthy', '99.9%'],
+              ['Payment Capture', 'Degraded', '2 retries'],
+              ['Roaming Hub', 'Healthy', '18 partners'],
+            ].map(([system, status, detail]) => (
+              <div
+                key={system}
+                className="flex items-center justify-between rounded-md border border-border bg-background px-4 py-3"
+              >
+                <div>
+                  <p className="font-medium">{system}</p>
+                  <p className="text-sm text-muted-foreground">{detail}</p>
+                </div>
+                <span
+                  className={`rounded-md px-2 py-1 text-xs font-medium ${
+                    status === 'Healthy'
+                      ? 'bg-green-100 text-green-700'
+                      : 'bg-amber-100 text-amber-700'
+                  }`}
+                >
+                  {status}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+          <h2 className={heading2Style}>Alerts & Events</h2>
+          <div className="mt-4 overflow-hidden rounded-md border border-border bg-background">
+            <DataTable>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Time</TableHead>
+                  <TableHead>Source</TableHead>
+                  <TableHead>Signal</TableHead>
+                  <TableHead>Severity</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {operatorAlerts.map((alert) => (
+                  <TableRow key={`${alert.time}-${alert.source}`}>
+                    <TableCell>{alert.time}</TableCell>
+                    <TableCell>{alert.source}</TableCell>
+                    <TableCell>{alert.signal}</TableCell>
+                    <TableCell>{alert.severity}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </DataTable>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  const stationDashboard = (
+    <div className="flex min-w-0 flex-col gap-5">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        {stationMetrics.map((metric) => (
+          <div
+            key={metric.label}
+            className="rounded-md border border-border bg-card p-5 shadow-sm"
+          >
+            <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
+              {metric.label}
+            </p>
+            <p className="mt-2 text-3xl font-semibold text-foreground">
+              {metric.value}
+            </p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {metric.detail}
+            </p>
+          </div>
+        ))}
+      </div>
+
+      <div className="grid gap-5 xl:grid-cols-[1.25fr_0.75fr]">
+        <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h2 className={heading2Style}>Station Dashboard</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Live device-level view for PK-KHI-DC-018: load, connector
+                state, active session, and local diagnostics.
+              </p>
+            </div>
+            <div className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-green-700">
+              Online
+            </div>
+          </div>
+          <ChartContainer
+            config={stationLoadChartConfig}
+            className="mt-4 h-72 w-full"
+          >
+            <LineChart data={stationLoadSeries} margin={{ left: 12, right: 12 }}>
+              <CartesianGrid vertical={false} />
+              <XAxis dataKey="time" tickLine={false} axisLine={false} />
+              <YAxis tickLine={false} axisLine={false} />
+              <ChartTooltip content={<ChartTooltipContent />} />
+              <Line
+                type="monotone"
+                dataKey="power"
+                stroke="var(--color-power)"
+                strokeWidth={2}
+                dot={false}
+              />
+              <Line
+                type="monotone"
+                dataKey="temperature"
+                stroke="var(--color-temperature)"
+                strokeWidth={2}
+                dot={false}
+              />
+              <Line
+                type="monotone"
+                dataKey="sessions"
+                stroke="var(--color-sessions)"
+                strokeWidth={2}
+                dot={false}
+              />
+            </LineChart>
+          </ChartContainer>
+        </div>
+
+        <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+          <h2 className={heading2Style}>Connector State</h2>
+          <div className="mt-4 overflow-hidden rounded-md border border-border bg-background">
+            <DataTable>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Connector</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Power</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {stationConnectors.map((connector) => (
+                  <TableRow key={connector.connector}>
+                    <TableCell>
+                      <p className="font-medium">{connector.connector}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {connector.type}
+                      </p>
+                    </TableCell>
+                    <TableCell>
+                      <span
+                        className={`rounded-md px-2 py-1 text-xs font-medium ${
+                          connector.status === 'Faulted'
+                            ? 'bg-red-100 text-red-700'
+                            : connector.status === 'Charging'
+                              ? 'bg-blue-100 text-blue-700'
+                              : 'bg-green-100 text-green-700'
+                        }`}
+                      >
+                        {connector.status}
+                      </span>
+                    </TableCell>
+                    <TableCell>
+                      <p>{connector.power}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {connector.detail}
+                      </p>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </DataTable>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid gap-5 xl:grid-cols-[1.1fr_0.9fr]">
+        <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+          <h2 className={heading2Style}>Sessions</h2>
+          <div className="mt-4 overflow-hidden rounded-md border border-border bg-background">
+            <DataTable>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Time</TableHead>
+                  <TableHead>User</TableHead>
+                  <TableHead>Connector</TableHead>
+                  <TableHead>Energy</TableHead>
+                  <TableHead>Status</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {stationSessions.map((session) => (
+                  <TableRow key={`${session.time}-${session.connector}`}>
+                    <TableCell>{session.time}</TableCell>
+                    <TableCell>{session.user}</TableCell>
+                    <TableCell>{session.connector}</TableCell>
+                    <TableCell>{session.energy}</TableCell>
+                    <TableCell>{session.status}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </DataTable>
+          </div>
+        </div>
+
+        <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+          <h2 className={heading2Style}>Diagnostics & Config</h2>
+          <div className="mt-4 grid gap-3">
+            {stationDiagnostics.map(([signal, status, detail]) => (
+              <div
+                key={signal}
+                className="flex items-center justify-between gap-4 rounded-md border border-border bg-background px-4 py-3"
+              >
+                <div>
+                  <p className="font-medium">{signal}</p>
+                  <p className="text-sm text-muted-foreground">{detail}</p>
+                </div>
+                <span
+                  className={`shrink-0 rounded-md px-2 py-1 text-xs font-medium ${
+                    status === 'View only'
+                      ? 'bg-muted text-muted-foreground'
+                      : 'bg-green-100 text-green-700'
+                  }`}
+                >
+                  {status}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className={`mb-6 ml-0 mr-6 mt-6 ${tableWrapperStyle}`}>
+      <div className="flex flex-col gap-3 border-b border-border pb-5">
+        <div className="rounded-md border border-border bg-muted px-5 py-3">
+          <div className="flex items-start justify-between gap-4">
+            <p className="text-xs font-medium uppercase tracking-[0.24em] text-muted-foreground">
+              VOLTARIS Access
+            </p>
+            <div className="text-right">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                Active Area
+              </p>
+              <p className="mt-0.5 text-sm font-semibold text-foreground">
+                {selectedRoleSection.title}
+              </p>
+            </div>
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <h1 className="text-2xl font-semibold text-foreground">
+              {selectedRole.title}
+            </h1>
+            {selectedRoleSection.items.map((item) => (
+              <button
+                key={item.title}
+                type="button"
+                onClick={() =>
+                  push(
+                    `/${MenuSection.PARTNERS}?role=${selectedRole.id}&section=${getSectionSlug(
+                      selectedRoleSection.title,
+                    )}&action=${getItemSlug(item.title)}`,
+                  )
+                }
+                className={`rounded-md border px-3 py-1.5 text-sm font-medium shadow-sm transition-colors ${
+                  selectedActionParam === getItemSlug(item.title)
+                    ? 'border-[#26002e] bg-[#26002e] text-white'
+                    : 'border-border bg-background text-foreground hover:bg-accent hover:text-accent-foreground'
+                }`}
+              >
+                {item.title}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="flex flex-col gap-4 pt-3">
+          <div className="min-w-0 overflow-hidden rounded-md border border-border bg-[#292927] text-white shadow-sm">
+            {selectedRole.callout && (
+              <div className="border-b border-white/10 bg-[#123510] px-5 py-3 text-sm font-semibold text-green-400">
+                {selectedRole.callout}
+              </div>
+            )}
+            {isTariffSection &&
+              (showTariffForm ? tariffChangeForm : tariffHistoryList)}
+          </div>
+        </div>
+      </div>
+      {isAuditActivity && auditActivityList}
+      {isDiagnosticsLogs && diagnosticsLogsList}
+      {isEmergencyAccess && emergencyAccessList}
+      {isRightsRoles && rightsRolesList}
+      {isUserRoles && userRolesList}
+      {isOperatorPortal &&
+        (isOperatorAnalytics ? operatorAnalyticsDashboard : operatorPortal)}
+      {isStationDashboard && stationDashboard}
+      {!isTariffSection &&
+        !isAuditActivity &&
+        !isDiagnosticsLogs &&
+        !isEmergencyAccess &&
+        !isRightsRoles &&
+        !isUserRoles &&
+        !isOperatorPortal &&
+        !isStationDashboard && (
+          <div className="flex min-w-0 flex-col gap-4">
+            <div className={tableHeaderWrapperFlex}>
+              <h2 className={heading2Style}>Rights & Management</h2>
+              <div className={tableSearchFlex}>
+                <CanAccess
+                  resource={ResourceType.PARTNERS}
+                  action={ActionType.CREATE}
+                >
+                  <Button
+                    variant="success"
+                    onClick={() => push(`/${MenuSection.PARTNERS}/new`)}
+                  >
+                    <Plus className={buttonIconSize} />
+                    {translate('buttons.add')}{' '}
+                    {translate('TenantPartners.TenantPartners')}
+                  </Button>
+                </CanAccess>
+                <CanAccess
+                  resource={ResourceType.PARTNERS}
+                  action={ActionType.LIST}
+                >
+                  {columnSelector}
+                </CanAccess>
+              </div>
+            </div>
+            <CanAccess
+              resource={ResourceType.PARTNERS}
+              action={ActionType.LIST}
+              fallback={<AccessDeniedFallback />}
+            >
+              <Table
+                refineCoreProps={{
+                  resource: ResourceType.PARTNERS,
+                  sorters: DEFAULT_SORTERS,
+                  meta: {
+                    gqlQuery: PARTNERS_LIST_QUERY,
+                  },
+                  queryOptions: {
+                    ...getPlainToInstanceOptions(TenantPartnerClass),
+                    select: (data: any) => {
+                      return data;
+                    },
+                  },
+                }}
+                enableSorting
+                enableFilters
+                showHeader
+                tableStateKey={ResourceType.PARTNERS}
+              >
+                {renderedVisibleColumns}
+              </Table>
+            </CanAccess>
+          </div>
+        )}
+    </div>
+  );
+};
