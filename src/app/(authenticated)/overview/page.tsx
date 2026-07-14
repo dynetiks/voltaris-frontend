@@ -1,9 +1,43 @@
 // SPDX-FileCopyrightText: 2025 Contributors to the CitrineOS Project
 //
 // SPDX-License-Identifier: Apache-2.0
+'use client';
 
-import { Overview } from '@lib/client/pages/overview';
+import { Loader2 } from 'lucide-react';
+import { useGetIdentity } from '@refinedev/core';
+import { useRouter } from 'next/navigation';
+import { useEffect } from 'react';
+import type { User } from '@lib/utils/access.types';
+import { heading2Style } from '@lib/client/styles/page';
+
+const getDashboardHref = (roles: string[] = []) => {
+  if (roles.includes('station')) {
+    return '/partners?role=station&section=live-status&action=dashboard';
+  }
+
+  if (roles.includes('operator')) {
+    return '/partners?role=operator&section=daily-operations&action=dashboard';
+  }
+
+  return '/partners?role=super-admin&section=oversight&action=dashboard';
+};
 
 export default function OverviewPage() {
-  return <Overview />;
+  const router = useRouter();
+  const { data: identity, isLoading } = useGetIdentity<User>();
+
+  useEffect(() => {
+    if (isLoading) return;
+
+    router.replace(getDashboardHref(identity?.roles ?? []));
+  }, [identity?.roles, isLoading, router]);
+
+  return (
+    <div className="flex min-h-[55vh] items-center justify-center">
+      <div className="flex items-center gap-2 text-center">
+        <h2 className={heading2Style}>Opening dashboard</h2>
+        <Loader2 className="size-8 animate-spin text-primary" />
+      </div>
+    </div>
+  );
 }

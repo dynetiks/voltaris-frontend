@@ -37,6 +37,7 @@ import { DEFAULT_SORTERS } from '@lib/utils/consts';
 import { getPlainToInstanceOptions } from '@lib/utils/tables';
 import { CanAccess, useGetIdentity, useTranslate } from '@refinedev/core';
 import {
+  ArrowLeft,
   BarChart3,
   Building2,
   CircleDollarSign,
@@ -87,6 +88,159 @@ type KeycloakAdminUser = {
   lastLogin: string;
 };
 
+type LiveDashboardCharger = {
+  chargerId?: string;
+  displayName?: string;
+  operator?: string;
+  status?: string;
+  online?: boolean;
+  lastSeen?: string | null;
+  lastHeartbeat?: string | null;
+  lastStatusNotification?: string | null;
+  errorCode?: string | null;
+  connectorStatus?: string | null;
+  connectorId?: number | null;
+  liveSocket?: boolean;
+  latestMeter?: Record<string, { value?: number; unit?: string; timestamp?: string }>;
+};
+
+type LiveDashboardEvent = {
+  ts?: string;
+  chargerId?: string;
+  direction?: string;
+  action?: string | null;
+  eventType?: string | null;
+  error?: string | null;
+  payload?: unknown;
+};
+
+type LiveDashboardPayload = {
+  ok?: boolean;
+  generatedAt?: string;
+  scope?: {
+    operators?: string[];
+    activeOperator?: string;
+  };
+  counts?: {
+    chargers?: number;
+    onlineChargers?: number;
+    offlineChargers?: number;
+    activeSessions?: number;
+    sessions24h?: number;
+    energy24hKwh?: number;
+    totalEnergyKwh?: number;
+    queuedCommands?: number;
+  };
+  chargers?: LiveDashboardCharger[];
+  recentEvents?: LiveDashboardEvent[];
+  error?: string;
+};
+
+const toDashboardNumber = (value: unknown) => {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+};
+
+const toDashboardString = (value: unknown) => {
+  if (value === null || value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+
+  return undefined;
+};
+
+const normalizeLiveDashboardPayload = (payload: unknown): LiveDashboardPayload => {
+  const source = payload && typeof payload === 'object'
+    ? (payload as LiveDashboardPayload)
+    : {};
+  const sourceScope = source.scope && typeof source.scope === 'object'
+    ? source.scope
+    : {};
+  const sourceCounts = source.counts && typeof source.counts === 'object'
+    ? source.counts
+    : {};
+  const chargers = Array.isArray(source.chargers)
+    ? source.chargers
+        .map((charger) => {
+          if (!charger || typeof charger !== 'object') {
+            return null;
+          }
+
+          return {
+            chargerId: toDashboardString(charger.chargerId),
+            displayName: toDashboardString(charger.displayName),
+            operator: toDashboardString(charger.operator),
+            status: toDashboardString(charger.status),
+            online: Boolean(charger.online),
+            lastSeen: toDashboardString(charger.lastSeen) ?? null,
+            lastHeartbeat: toDashboardString(charger.lastHeartbeat) ?? null,
+            lastStatusNotification: toDashboardString(charger.lastStatusNotification) ?? null,
+            errorCode: toDashboardString(charger.errorCode) ?? null,
+            connectorStatus: toDashboardString(charger.connectorStatus) ?? null,
+            connectorId: charger.connectorId === null || charger.connectorId === undefined
+              ? null
+              : toDashboardNumber(charger.connectorId),
+            liveSocket: Boolean(charger.liveSocket),
+            latestMeter: charger.latestMeter && typeof charger.latestMeter === 'object'
+              ? charger.latestMeter
+              : {},
+          };
+        })
+        .filter((charger): charger is LiveDashboardCharger => Boolean(charger))
+    : [];
+
+  const recentEvents = Array.isArray(source.recentEvents)
+    ? source.recentEvents
+        .map((event) => {
+          if (!event || typeof event !== 'object') {
+            return null;
+          }
+
+          const record = event as LiveDashboardEvent;
+          return {
+            ts: toDashboardString(record.ts),
+            chargerId: toDashboardString(record.chargerId),
+            direction: toDashboardString(record.direction),
+            action: toDashboardString(record.action) ?? null,
+            eventType: toDashboardString(record.eventType) ?? null,
+            error: toDashboardString(record.error) ?? null,
+            payload: record.payload,
+          };
+        })
+        .filter((event): event is LiveDashboardEvent => Boolean(event))
+    : [];
+
+  return {
+    ok: source.ok !== false,
+    generatedAt: toDashboardString(source.generatedAt),
+    error: toDashboardString(source.error),
+    scope: {
+      operators: Array.isArray(sourceScope.operators)
+        ? sourceScope.operators
+            .map((operator) => toDashboardString(operator))
+            .filter((operator): operator is string => Boolean(operator))
+        : [],
+      activeOperator: toDashboardString(sourceScope.activeOperator),
+    },
+    counts: {
+      chargers: toDashboardNumber(sourceCounts.chargers),
+      onlineChargers: toDashboardNumber(sourceCounts.onlineChargers),
+      offlineChargers: toDashboardNumber(sourceCounts.offlineChargers),
+      activeSessions: toDashboardNumber(sourceCounts.activeSessions),
+      sessions24h: toDashboardNumber(sourceCounts.sessions24h),
+      energy24hKwh: toDashboardNumber(sourceCounts.energy24hKwh),
+      totalEnergyKwh: toDashboardNumber(sourceCounts.totalEnergyKwh),
+      queuedCommands: toDashboardNumber(sourceCounts.queuedCommands),
+    },
+    chargers,
+    recentEvents,
+  };
+};
+
 export const PartnersList = () => {
   const { push } = useRouter();
   const searchParams = useSearchParams();
@@ -111,6 +265,10 @@ export const PartnersList = () => {
   const [operatorDetailTab, setOperatorDetailTab] = useState<
     'profile' | 'technical'
   >('profile');
+  const [selectedOperatorRecordId, setSelectedOperatorRecordId] =
+    useState('wafienergy');
+  const [selectedStationRecordId, setSelectedStationRecordId] =
+    useState('ST-BATX-LHE-001');
   const [operatorFormTab, setOperatorFormTab] = useState<
     'profile' | 'technical'
   >('profile');
@@ -139,6 +297,14 @@ export const PartnersList = () => {
     scope: '',
     note: '',
   });
+  const [registryRecords, setRegistryRecords] = useState<{
+    operators: Record<string, string>[];
+    stations: Record<string, string>[];
+    chargers: Record<string, string>[];
+  }>({ operators: [], stations: [], chargers: [] });
+  const [transactionRows, setTransactionRows] = useState<Record<string, unknown>[]>([]);
+  const [transactionsLoading, setTransactionsLoading] = useState(false);
+  const [transactionsError, setTransactionsError] = useState('');
 
   const { renderedVisibleColumns, columnSelector } = useColumnPreferences(
     partnersColumns,
@@ -159,36 +325,32 @@ export const PartnersList = () => {
             title: 'Oversight',
             items: [
               {
+                icon: BarChart3,
+                title: 'Dashboard',
+                description:
+                  'Network health, charger attention, OCPP activity, commercial readiness, and support queue across the full platform.',
+              },
+              {
                 icon: History,
-                title: 'Audit Activity',
+                title: 'Monitoring',
                 description:
-                  'Permanent append-only record of who did what, when, across every privileged platform action.',
+                  'Recent OCPP calls, charger messages, acknowledgements, and errors across the platform.',
               },
               {
-                icon: FileText,
-                title: 'Diagnostics / Logs',
-                description:
-                  'Technical and operational health data from stations, connectors, OCPP messages, faults, and meter values.',
+                icon: ReceiptText,
+                title: 'Transactions',
+                description: 'Sessions, meter readings, SoC, faults, error codes, and stop reasons.',
               },
-              {
-                icon: TriangleAlert,
-                title: 'Emergency Access',
-                description:
-                  'Break-glass access for real incidents: time-boxed, heavily logged, and never silent.',
-              },
+
             ],
           },
           {
             title: 'Access Control',
             items: [
-              {
-                icon: ShieldCheck,
-                title: 'Rights & Roles',
-                description: '',
-              },
+
               {
                 icon: Users,
-                title: 'User Roles',
+                title: 'Users',
                 description: '',
               },
             ],
@@ -198,27 +360,17 @@ export const PartnersList = () => {
             items: [
               {
                 icon: Building2,
-                title: 'Tenant / Operator Management',
+                title: 'Operators',
                 description: '',
               },
               {
                 icon: MapPin,
-                title: 'Station Registry',
-                description: '',
-              },
-              {
-                icon: Plug,
-                title: 'Charger Registry',
+                title: 'Stations & Chargers',
                 description: '',
               },
               {
                 icon: Cpu,
                 title: 'Firmware',
-                description: '',
-              },
-              {
-                icon: SlidersHorizontal,
-                title: 'System Configuration',
                 description: '',
               },
             ],
@@ -250,12 +402,7 @@ export const PartnersList = () => {
             items: [
               {
                 icon: ReceiptText,
-                title: 'Transactions',
-                description: '',
-              },
-              {
-                icon: BarChart3,
-                title: 'Reporting & Analytics',
+                title: 'Dashboard',
                 description: '',
               },
             ],
@@ -265,24 +412,16 @@ export const PartnersList = () => {
             items: [
               {
                 icon: Building2,
-                title: 'Station Management',
+                title: 'Stations & Chargers',
                 description: '',
               },
-              {
-                icon: MapPin,
-                title: 'Location Management',
-                description: '',
-              },
+
             ],
           },
           {
             title: 'People & Access',
             items: [
-              {
-                icon: ClipboardCheck,
-                title: 'RFID / Authorization Lists',
-                description: '',
-              },
+
               {
                 icon: UserCog,
                 title: 'Team Members',
@@ -307,33 +446,8 @@ export const PartnersList = () => {
             items: [
               {
                 icon: Zap,
-                title: 'Station Status',
+                title: 'Dashboard',
                 description: '',
-              },
-              {
-                icon: Plug,
-                title: 'Connectors',
-                description: '',
-              },
-              {
-                icon: Clock3,
-                title: 'Sessions',
-                description: '',
-              },
-            ],
-          },
-          {
-            title: 'Diagnostics & Config',
-            items: [
-              {
-                icon: FileText,
-                title: 'Diagnostics / Logs',
-                description: '',
-              },
-              {
-                icon: SlidersHorizontal,
-                title: 'Configuration Keys',
-                description: 'View only, editing requires Operator escalation.',
               },
             ],
           },
@@ -346,14 +460,24 @@ export const PartnersList = () => {
   const requestedRoleParam = searchParams.get('role') ?? allowedRole;
   const selectedRoleParam =
     allowedRole === 'super-admin' ? requestedRoleParam : allowedRole;
-  const selectedSectionParam = searchParams.get('section') ?? 'tariff';
+  const selectedSectionParam =
+    searchParams.get('section') ??
+    (selectedRoleParam === 'super-admin'
+      ? 'oversight'
+      : selectedRoleParam === 'operator'
+        ? 'daily-operations'
+        : 'live-status');
   const [selectedRoleIndex, setSelectedRoleIndex] = useState(() => {
     const roleIndex = roleMatrix.findIndex(
       (role) => role.id === selectedRoleParam,
     );
     return roleIndex >= 0 ? roleIndex : 0;
   });
-  const selectedRole = roleMatrix[selectedRoleIndex];
+  const [liveDashboard, setLiveDashboard] = useState<LiveDashboardPayload | null>(null);
+  const [liveDashboardError, setLiveDashboardError] = useState('');
+  const [liveDashboardLoading, setLiveDashboardLoading] = useState(false);
+  const [liveDashboardUpdatedAt, setLiveDashboardUpdatedAt] = useState('');
+  const selectedRole = roleMatrix[selectedRoleIndex] ?? roleMatrix[0];
 
   useEffect(() => {
     const roleIndex = roleMatrix.findIndex(
@@ -380,9 +504,68 @@ export const PartnersList = () => {
     selectedRole.sections.find(
       (section) => getSectionSlug(section.title) === selectedSectionParam,
     ) ?? selectedRole.sections[0];
+  const defaultActionParam = selectedRoleSection.items[0]
+    ? getItemSlug(selectedRoleSection.items[0].title)
+    : '';
+  const requestedActionParam = searchParams.get('action') ?? defaultActionParam;
+  const routeOnlyActionParams = [
+    'tenant-operator-management',
+    'create-operator',
+    'modify-operator',
+    'station-registry',
+    'create-station',
+    'modify-station',
+    'charger-registry',
+    'create-charger',
+    'modify-charger',
+    'station-management',
+    'user-roles',
+    'reporting-and-analytics',
+    'charger-dashboard',
+    'command-center',
+  ];
   const selectedActionParam =
-    searchParams.get('action') ??
-    getItemSlug(selectedRoleSection.items[0].title);
+    selectedRoleSection.items.some(
+      (item) => getItemSlug(item.title) === requestedActionParam,
+    ) || routeOnlyActionParams.includes(requestedActionParam)
+      ? requestedActionParam
+      : defaultActionParam;
+  const actionGroupParam = (() => {
+    if (
+      [
+        'operators',
+        'tenant-operator-management',
+        'create-operator',
+        'modify-operator',
+      ].includes(selectedActionParam)
+    ) {
+      return 'operators';
+    }
+    if (
+      ['stations', 'station-registry', 'create-station', 'modify-station'].includes(
+        selectedActionParam,
+      )
+    ) {
+      return 'stations';
+    }
+    if (
+      ['chargers', 'charger-registry', 'create-charger', 'modify-charger'].includes(
+        selectedActionParam,
+      )
+    ) {
+      return 'chargers';
+    }
+    if (['users', 'user-roles'].includes(selectedActionParam)) {
+      return 'users';
+    }
+    if (['reporting', 'reporting-and-analytics'].includes(selectedActionParam)) {
+      return 'reporting';
+    }
+    if (['dashboard', 'command-center'].includes(selectedActionParam)) {
+      return 'dashboard';
+    }
+    return selectedActionParam;
+  })();
 
   const getOpaquePartnerRoute = (
     roleId: string,
@@ -393,18 +576,43 @@ export const PartnersList = () => {
     const itemSlug = getItemSlug(itemTitle);
     const routeKey = `${roleId}:${sectionSlug}:${itemSlug}`;
     const aliases: Record<string, string> = {
-      'super-admin:oversight:diagnostics-logs': '/r/vx_admin_logs',
+      'super-admin:oversight:dashboard': `/${MenuSection.PARTNERS}?role=super-admin&section=oversight&action=dashboard`,
+      'super-admin:oversight:command-center': `/${MenuSection.PARTNERS}?role=super-admin&section=oversight&action=command-center`,
+      'super-admin:oversight:reporting': '/partners?role=super-admin&section=oversight&action=reporting-and-analytics',
+      'super-admin:oversight:reporting-and-analytics': '/partners?role=super-admin&section=oversight&action=reporting-and-analytics',
+      'super-admin:oversight:call-monitoring': '/partners?role=super-admin&section=oversight&action=call-monitoring',
+      'super-admin:oversight:monitoring': '/partners?role=super-admin&section=oversight&action=call-monitoring',
+      'super-admin:oversight:transactions': '/partners?role=super-admin&section=oversight&action=transactions',
+      'super-admin:oversight:diagnostics-logs': '/partners?role=super-admin&section=oversight&action=diagnostics-logs',
+      'super-admin:platform-operations:operators':
+        '/partners?role=super-admin&section=platform-operations&action=tenant-operator-management',
       'super-admin:platform-operations:tenant-operator-management':
-        '/r/vx_admin_operators',
+        '/partners?role=super-admin&section=platform-operations&action=tenant-operator-management',
+      'super-admin:platform-operations:stations':
+        '/partners?role=super-admin&section=platform-operations&action=station-registry',
       'super-admin:platform-operations:station-registry':
-        '/r/vx_admin_stations',
+        '/partners?role=super-admin&section=platform-operations&action=station-registry',
+      'super-admin:platform-operations:stations-and-chargers':
+        '/partners?role=super-admin&section=platform-operations&action=stations-and-chargers',
+      'super-admin:platform-operations:chargers':
+        '/partners?role=super-admin&section=platform-operations&action=charger-registry',
       'super-admin:platform-operations:charger-registry':
-        '/r/vx_admin_chargers',
-      'super-admin:platform-operations:firmware': '/r/vx_admin_firmware',
-      'operator:fleet-setup:station-management': '/r/vx_operator_fleet',
+        '/partners?role=super-admin&section=platform-operations&action=charger-registry',
+      'super-admin:platform-operations:firmware': '/partners?role=super-admin&section=platform-operations&action=firmware',
+      'super-admin:access-control:users': '/partners?role=super-admin&section=access-control&action=user-roles',
+      'super-admin:access-control:user-roles': '/partners?role=super-admin&section=access-control&action=user-roles',
+      'operator:fleet-setup:stations':
+        '/partners?role=operator&section=fleet-setup&action=station-management',
+      'operator:fleet-setup:station-management': '/partners?role=operator&section=fleet-setup&action=station-management',
+      'operator:fleet-setup:stations-and-chargers':
+        '/partners?role=operator&section=fleet-setup&action=stations-and-chargers',
+      'operator:daily-operations:dashboard':
+        '/partners?role=operator&section=daily-operations&action=dashboard',
+      'operator:daily-operations:reporting':
+        '/partners?role=operator&section=daily-operations&action=reporting-and-analytics',
       'operator:daily-operations:reporting-and-analytics':
-        '/r/vx_operator_analytics',
-      'station:live-status:station-status': '/r/vx_station_dashboard',
+        '/partners?role=operator&section=daily-operations&action=reporting-and-analytics',
+      'station:live-status:dashboard': '/partners?role=station&section=live-status&action=dashboard',
     };
 
     return (
@@ -416,6 +624,22 @@ export const PartnersList = () => {
   const isTariffSection =
     selectedRole.id === 'super-admin' &&
     getSectionSlug(selectedRoleSection.title) === 'tariff';
+  const isSuperCommandCenter =
+    selectedRole.id === 'super-admin' &&
+    getSectionSlug(selectedRoleSection.title) === 'oversight' &&
+    ['dashboard', 'command-center'].includes(selectedActionParam);
+  const isSuperReporting =
+    selectedRole.id === 'super-admin' &&
+    getSectionSlug(selectedRoleSection.title) === 'oversight' &&
+    ['reporting', 'reporting-and-analytics'].includes(selectedActionParam);
+  const isSuperCallMonitoring =
+    selectedRole.id === 'super-admin' &&
+    getSectionSlug(selectedRoleSection.title) === 'oversight' &&
+    selectedActionParam === 'call-monitoring';
+  const isSuperTransactions =
+    selectedRole.id === 'super-admin' &&
+    getSectionSlug(selectedRoleSection.title) === 'oversight' &&
+    selectedActionParam === 'transactions';
   const isAuditActivity =
     selectedRole.id === 'super-admin' &&
     getSectionSlug(selectedRoleSection.title) === 'oversight' &&
@@ -431,7 +655,7 @@ export const PartnersList = () => {
   const isUserRoles =
     selectedRole.id === 'super-admin' &&
     getSectionSlug(selectedRoleSection.title) === 'access-control' &&
-    selectedActionParam === 'user-roles';
+    ['users', 'user-roles'].includes(selectedActionParam);
   const isRightsRoles =
     selectedRole.id === 'super-admin' &&
     getSectionSlug(selectedRoleSection.title) === 'access-control' &&
@@ -439,7 +663,7 @@ export const PartnersList = () => {
   const isTenantOperatorManagement =
     selectedRole.id === 'super-admin' &&
     getSectionSlug(selectedRoleSection.title) === 'platform-operations' &&
-    selectedActionParam === 'tenant-operator-management';
+    ['operators', 'tenant-operator-management'].includes(selectedActionParam);
   const isTenantOperatorModify =
     selectedRole.id === 'super-admin' &&
     getSectionSlug(selectedRoleSection.title) === 'platform-operations' &&
@@ -451,7 +675,7 @@ export const PartnersList = () => {
   const isStationRegistry =
     selectedRole.id === 'super-admin' &&
     getSectionSlug(selectedRoleSection.title) === 'platform-operations' &&
-    selectedActionParam === 'station-registry';
+    ['stations', 'station-registry', 'stations-and-chargers'].includes(selectedActionParam);
   const isStationCreate =
     selectedRole.id === 'super-admin' &&
     getSectionSlug(selectedRoleSection.title) === 'platform-operations' &&
@@ -463,7 +687,7 @@ export const PartnersList = () => {
   const isChargerRegistry =
     selectedRole.id === 'super-admin' &&
     getSectionSlug(selectedRoleSection.title) === 'platform-operations' &&
-    selectedActionParam === 'charger-registry';
+    ['chargers', 'charger-registry', 'stations-and-chargers'].includes(selectedActionParam);
   const isChargerCreate =
     selectedRole.id === 'super-admin' &&
     getSectionSlug(selectedRoleSection.title) === 'platform-operations' &&
@@ -477,6 +701,9 @@ export const PartnersList = () => {
     getSectionSlug(selectedRoleSection.title) === 'platform-operations' &&
     selectedActionParam === 'firmware';
   const isOperatorPortal = selectedRole.id === 'operator';
+  const isOperatorDashboard =
+    selectedRole.id === 'operator' &&
+    selectedActionParam === 'dashboard';
   const isOperatorAnalytics =
     selectedRole.id === 'operator' &&
     selectedActionParam === 'reporting-and-analytics';
@@ -484,6 +711,17 @@ export const PartnersList = () => {
     selectedRole.id === 'operator' &&
     selectedActionParam === 'charger-dashboard';
   const isStationDashboard = selectedRole.id === 'station';
+
+  const renderBackButton = (href: string, label = 'Back') => (
+    <Button
+      type="button"
+      variant="outline"
+      onClick={() => push(href)}
+    >
+      <ArrowLeft className={buttonIconSize} />
+      {label}
+    </Button>
+  );
 
   const refreshDiagnosticLogs = async () => {
     setDiagnosticLogsLoading(true);
@@ -533,6 +771,135 @@ export const PartnersList = () => {
     }
   };
 
+  const refreshLiveDashboard = async () => {
+    setLiveDashboardLoading(true);
+
+    try {
+      const response = await fetch(`/api/dashboard/live?ts=${Date.now()}`, {
+        cache: 'no-store',
+      });
+      const contentType = response.headers.get('content-type') ?? '';
+
+      if (!contentType.includes('application/json')) {
+        throw new Error(`Dashboard returned ${response.status}`);
+      }
+
+      const payload = await response.json();
+
+      if (!response.ok || payload.ok === false) {
+        throw new Error(
+          payload.error || `Dashboard query failed with ${response.status}`,
+        );
+      }
+
+      setLiveDashboard(normalizeLiveDashboardPayload(payload));
+      setLiveDashboardUpdatedAt(new Date().toLocaleTimeString());
+      setLiveDashboardError('');
+    } catch (error) {
+      setLiveDashboardError(
+        error instanceof Error ? error.message : 'Unable to load dashboard data',
+      );
+    } finally {
+      setLiveDashboardLoading(false);
+    }
+  };
+
+  const refreshTransactions = async () => {
+    setTransactionsLoading(true);
+    setTransactionsError('');
+    try {
+      const response = await fetch('/api/transactions/detail', { cache: 'no-store' });
+      const payload = await response.json();
+      if (!response.ok || payload.ok === false) {
+        throw new Error(payload.error || 'Unable to load transactions');
+      }
+      setTransactionRows(Array.isArray(payload.rows) ? payload.rows : []);
+    } catch (error) {
+      setTransactionsError(error instanceof Error ? error.message : 'Unable to load transactions');
+    } finally {
+      setTransactionsLoading(false);
+    }
+  };
+
+  const saveRegistryForm = async (
+    resource: 'operators' | 'stations' | 'chargers',
+    idField: string,
+    returnUrl: string,
+  ) => {
+    const form = document.querySelector<HTMLElement>(`[data-registry-form="${resource}"]`);
+    if (!form) return;
+
+    const data: Record<string, string> = {};
+    form.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(
+      'input[id], textarea[id], select[id]',
+    ).forEach((field) => {
+      data[field.id] = field.value;
+    });
+
+    const recordId = data[idField]?.trim();
+    if (!recordId) {
+      window.alert(`${idField} is required.`);
+      return;
+    }
+
+    const response = await fetch(`/api/registry/${resource}/${encodeURIComponent(recordId)}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    const payload = await response.json();
+
+    if (!response.ok || payload.ok === false) {
+      window.alert(payload.error || 'Unable to save record.');
+      return;
+    }
+
+    await refreshRegistry(resource);
+    if (resource === 'operators') {
+      setSelectedOperatorRecordId(recordId);
+    } else if (resource === 'stations') {
+      setSelectedStationRecordId(recordId);
+    }
+    push(returnUrl);
+  };
+
+  const refreshRegistry = async (
+    resource: 'operators' | 'stations' | 'chargers',
+  ) => {
+    const response = await fetch(`/api/registry/${resource}`, { cache: 'no-store' });
+    if (!response.ok) return;
+    const payload = await response.json();
+    setRegistryRecords((current) => ({
+      ...current,
+      [resource]: Array.isArray(payload.rows) ? payload.rows : [],
+    }));
+  };
+
+  const loadRegistryForm = async (
+    resource: 'operators' | 'stations' | 'chargers',
+    recordId: string,
+  ) => {
+    const response = await fetch(
+      `/api/registry/${resource}/${encodeURIComponent(recordId)}`,
+      { cache: 'no-store' },
+    );
+    if (!response.ok) return;
+
+    const payload = await response.json();
+    const record = payload.rows?.[0];
+    const form = document.querySelector<HTMLElement>(`[data-registry-form="${resource}"]`);
+    if (!record || !form) return;
+
+    Object.entries(record).forEach(([key, value]) => {
+      const field = form.querySelector<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(
+        `#${CSS.escape(key)}`,
+      );
+      if (field && typeof value !== 'object' && value !== null) {
+        field.value = String(value);
+      }
+    });
+  };
+
   useEffect(() => {
     if (isDiagnosticsLogs) {
       void refreshDiagnosticLogs();
@@ -544,6 +911,31 @@ export const PartnersList = () => {
       void refreshKeycloakUsers();
     }
   }, [isUserRoles]);
+
+
+  useEffect(() => {
+    if (!isSuperCommandCenter && !isOperatorDashboard && !isStationDashboard) {
+      return;
+    }
+
+    void refreshLiveDashboard();
+    const interval = window.setInterval(() => {
+      void refreshLiveDashboard();
+    }, 15000);
+
+    return () => window.clearInterval(interval);
+  }, [isSuperCommandCenter, isOperatorDashboard, isStationDashboard]);
+
+  useEffect(() => {
+    if (isSuperTransactions || isStationDashboard) void refreshTransactions();
+  }, [isSuperTransactions, isStationDashboard]);
+
+  useEffect(() => {
+    if (selectedRole.id !== 'super-admin' && selectedRole.id !== 'operator') return;
+    void refreshRegistry('operators');
+    void refreshRegistry('stations');
+    void refreshRegistry('chargers');
+  }, [selectedRole.id]);
 
   const tariffHistory = [
     {
@@ -572,10 +964,10 @@ export const PartnersList = () => {
   const definedOperators = [
     {
       operatorId: 'wafienergy',
-      operatorName: 'wafienergy',
-      legalName: 'wafienergy',
-      region: 'North',
-      city: 'Lahore',
+      operatorName: 'Wafi / Shell',
+      legalName: 'Wafi / Shell',
+      region: 'Pakistan',
+      city: 'Karachi / Lahore',
       country: 'Pakistan',
       timezone: 'Asia/Karachi',
       currency: 'PKR',
@@ -584,8 +976,8 @@ export const PartnersList = () => {
       primaryEmail: 'operator@voltaris.energy',
       supportPhone: 'Not set',
       billingEmail: 'billing@voltaris.energy',
-      stationScope: 'BattleX',
-      chargerScope: '13074934',
+      stationScope: 'BattleX, SPL Bahria - Karachi',
+      chargerScope: '13074934, 13074944',
       tariffGroup: 'Default network tariff',
       ocppPolicy: 'OCPP 1.6J, heartbeat 300 sec',
       commandPolicy: 'Remote commands allowed for assigned stations',
@@ -597,7 +989,7 @@ export const PartnersList = () => {
       emergencyContact: 'Network Operations',
       emergencyPhone: 'Not set',
       escalationLevel: 'L2 operator support',
-      allowedUsers: 'Operator users assigned to wafienergy',
+      allowedUsers: 'Operator users assigned to Wafi / Shell',
       permissionSet: 'Operate, command, billing, reporting',
       billingCycle: 'Monthly',
       revenueShare: 'Not configured',
@@ -614,7 +1006,7 @@ export const PartnersList = () => {
       firmwarePolicy: 'Super Admin approval required',
       diagnosticsPolicy: 'Upload on request to Voltaris diagnostics storage',
       firmwareFamilies: 'ABB Terra / Star charger firmware family',
-      stationOwner: 'BattleX',
+      stationOwner: 'Wafi / Shell',
       equipmentName: 'ABB Star Charger',
       evseCount: 'To be defined',
       connectorCount: 'To be confirmed from StatusNotification',
@@ -629,6 +1021,22 @@ export const PartnersList = () => {
       dataRetentionPolicy: 'OCPP events and commands retention pending',
     },
   ];
+  const operatorRecords = [
+    ...definedOperators.filter(
+      (record) => !registryRecords.operators.some((saved) => saved.operatorId === record.operatorId),
+    ),
+    ...(registryRecords.operators as unknown as typeof definedOperators),
+  ];
+  useEffect(() => {
+    if (
+      operatorRecords.length &&
+      !operatorRecords.some(
+        (operator) => operator.operatorId === selectedOperatorRecordId,
+      )
+    ) {
+      setSelectedOperatorRecordId(operatorRecords[0].operatorId);
+    }
+  }, [operatorRecords, selectedOperatorRecordId]);
 
   const operatorManagementPanel = (
     <div className="flex min-w-0 flex-col gap-4">
@@ -645,7 +1053,7 @@ export const PartnersList = () => {
             variant="success"
             className="sm:self-start"
             onClick={() =>
-              push('/r/vx_create_operator')
+              push('/partners?role=super-admin&section=platform-operations&action=create-operator')
             }
           >
             <Plus className={buttonIconSize} />
@@ -669,7 +1077,7 @@ export const PartnersList = () => {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {definedOperators.map((operator) => (
+            {operatorRecords.map((operator) => (
               <TableRow key={operator.operatorId}>
                 <TableCell className="font-medium">{operator.operatorId}</TableCell>
                 <TableCell>{operator.operatorName}</TableCell>
@@ -685,7 +1093,7 @@ export const PartnersList = () => {
                     onClick={() =>
                       push(
                         operator.operatorId === 'wafienergy'
-                          ? '/r/vx_modify_operator_wafienergy'
+                          ? '/partners?role=super-admin&section=platform-operations&action=modify-operator&operatorId=wafienergy'
                           : `/${MenuSection.PARTNERS}?role=super-admin&section=platform-operations&action=modify-operator&operatorId=${operator.operatorId}`,
                       )
                     }
@@ -697,6 +1105,23 @@ export const PartnersList = () => {
             ))}
           </TableBody>
         </DataTable>
+      </div>
+
+      <div className="flex flex-wrap gap-2 rounded-md border border-border bg-card p-2 shadow-sm">
+        {operatorRecords.map((operator) => (
+          <Button
+            key={`${operator.operatorId}-tab`}
+            type="button"
+            variant={
+              selectedOperatorRecordId === operator.operatorId
+                ? 'default'
+                : 'outline'
+            }
+            onClick={() => setSelectedOperatorRecordId(operator.operatorId)}
+          >
+            {operator.operatorName || operator.operatorId}
+          </Button>
+        ))}
       </div>
 
       <div className="flex flex-wrap gap-2 rounded-md border border-border bg-card p-2 shadow-sm">
@@ -716,7 +1141,9 @@ export const PartnersList = () => {
         </Button>
       </div>
 
-      {definedOperators.map((operator) => (
+      {operatorRecords
+        .filter((operator) => operator.operatorId === selectedOperatorRecordId)
+        .map((operator) => (
         <div key={`${operator.operatorId}-detail`} className="grid gap-4 lg:grid-cols-2">
           {operatorDetailTab === 'profile' && (
             <>
@@ -746,18 +1173,6 @@ export const PartnersList = () => {
               <div><span className="text-muted-foreground">Support phone</span><p className="font-medium">{operator.supportPhone}</p></div>
               <div><span className="text-muted-foreground">Emergency phone</span><p className="font-medium">{operator.emergencyPhone}</p></div>
               <div><span className="text-muted-foreground">Escalation level</span><p className="font-medium">{operator.escalationLevel}</p></div>
-            </div>
-          </div>
-
-          <div className="rounded-md border border-border bg-card p-5 shadow-sm">
-            <h3 className="text-base font-semibold">Access Scope</h3>
-            <div className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
-              <div><span className="text-muted-foreground">Assigned stations</span><p className="font-medium">{operator.stationScope}</p></div>
-              <div><span className="text-muted-foreground">Assigned CPIDs</span><p className="font-medium">{operator.chargerScope}</p></div>
-              <div><span className="text-muted-foreground">Allowed region</span><p className="font-medium">{operator.region}</p></div>
-              <div><span className="text-muted-foreground">Allowed city</span><p className="font-medium">{operator.city}</p></div>
-              <div><span className="text-muted-foreground">Allowed users</span><p className="font-medium">{operator.allowedUsers}</p></div>
-              <div><span className="text-muted-foreground">Permission set</span><p className="font-medium">{operator.permissionSet}</p></div>
             </div>
           </div>
 
@@ -881,9 +1296,9 @@ export const PartnersList = () => {
   };
   const selectedOperator = isTenantOperatorCreate
     ? blankOperator
-    : definedOperators.find(
+    : operatorRecords.find(
         (operator) => operator.operatorId === requestedOperatorId,
-      ) ?? definedOperators[0];
+      ) ?? operatorRecords[0];
   const operatorFormTitle = isTenantOperatorCreate
     ? 'Create Operator'
     : 'Modify Operator';
@@ -896,6 +1311,7 @@ export const PartnersList = () => {
 
   const operatorModifyPage = (
     <div
+      data-registry-form="operators"
       key={isTenantOperatorCreate ? 'create-operator' : selectedOperator.operatorId}
       className="flex min-w-0 flex-col gap-4"
     >
@@ -908,16 +1324,8 @@ export const PartnersList = () => {
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() =>
-                push('/r/vx_admin_operators')
-              }
-            >
-              Cancel
-            </Button>
-            <Button type="button">{operatorSaveLabel}</Button>
+            {renderBackButton('/partners?role=super-admin&section=platform-operations&action=tenant-operator-management', 'Back to Operators')}
+            <Button type="button" onClick={() => void saveRegistryForm('operators', 'operatorId', '/partners?role=super-admin&section=platform-operations&action=operators')}>{operatorSaveLabel}</Button>
           </div>
         </div>
       </div>
@@ -1050,8 +1458,8 @@ export const PartnersList = () => {
       tariffGroup: 'Default network tariff',
       supportContact: 'Operations Lead',
       supportEmail: 'operator@voltaris.energy',
-      chargerCount: '1',
-      assignedCpids: '13074934',
+      chargerCount: '2',
+      assignedCpids: '13074934, 13074944',
       gridReference: 'Pending',
       meterReference: 'Pending',
       coordinates: 'Pending',
@@ -1059,6 +1467,22 @@ export const PartnersList = () => {
     },
   ];
 
+  const stationRecords = [
+    ...definedStations.filter(
+      (record) => !registryRecords.stations.some((saved) => saved.stationId === record.stationId),
+    ),
+    ...(registryRecords.stations as unknown as typeof definedStations),
+  ];
+  useEffect(() => {
+    if (
+      stationRecords.length &&
+      !stationRecords.some(
+        (station) => station.stationId === selectedStationRecordId,
+      )
+    ) {
+      setSelectedStationRecordId(stationRecords[0].stationId);
+    }
+  }, [stationRecords, selectedStationRecordId]);
   const blankStation = {
     stationId: '',
     stationName: '',
@@ -1082,8 +1506,8 @@ export const PartnersList = () => {
   const requestedStationId = searchParams.get('stationId');
   const selectedStation = isStationCreate
     ? blankStation
-    : definedStations.find((station) => station.stationId === requestedStationId) ??
-      definedStations[0];
+    : stationRecords.find((station) => station.stationId === requestedStationId) ??
+      stationRecords[0];
   const stationFormTitle = isStationCreate ? 'Create Station' : 'Modify Station';
   const stationSaveLabel = isStationCreate ? 'Create Station' : 'Save Station';
 
@@ -1102,7 +1526,7 @@ export const PartnersList = () => {
             variant="success"
             className="sm:self-start"
             onClick={() =>
-              push('/r/vx_create_station')
+              push('/partners?role=super-admin&section=platform-operations&action=create-station')
             }
           >
             <Plus className={buttonIconSize} />
@@ -1125,7 +1549,7 @@ export const PartnersList = () => {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {definedStations.map((station) => (
+            {stationRecords.map((station) => (
               <TableRow key={station.stationId}>
                 <TableCell className="font-medium">{station.stationId}</TableCell>
                 <TableCell>{station.stationName}</TableCell>
@@ -1140,7 +1564,7 @@ export const PartnersList = () => {
                     onClick={() =>
                       push(
                         station.stationId === 'BattleX'
-                          ? '/r/vx_modify_station_battlex'
+                          ? '/partners?role=super-admin&section=platform-operations&action=modify-station&stationId=BattleX'
                           : `/${MenuSection.PARTNERS}?role=super-admin&section=platform-operations&action=modify-station&stationId=${station.stationId}`,
                       )
                     }
@@ -1154,7 +1578,26 @@ export const PartnersList = () => {
         </DataTable>
       </div>
 
-      {definedStations.map((station) => (
+      <div className="flex flex-wrap gap-2 rounded-md border border-border bg-card p-2 shadow-sm">
+        {stationRecords.map((station) => (
+          <Button
+            key={`${station.stationId}-tab`}
+            type="button"
+            variant={
+              selectedStationRecordId === station.stationId
+                ? 'default'
+                : 'outline'
+            }
+            onClick={() => setSelectedStationRecordId(station.stationId)}
+          >
+            {station.stationName || station.stationId}
+          </Button>
+        ))}
+      </div>
+
+      {stationRecords
+        .filter((station) => station.stationId === selectedStationRecordId)
+        .map((station) => (
         <div key={`${station.stationId}-detail`} className="grid gap-4 lg:grid-cols-2">
           <div className="rounded-md border border-border bg-card p-5 shadow-sm">
             <h3 className="text-base font-semibold">Station Identity</h3>
@@ -1189,6 +1632,7 @@ export const PartnersList = () => {
 
   const stationFormPanel = (
     <div
+      data-registry-form="stations"
       key={isStationCreate ? 'create-station' : selectedStation.stationId}
       className="flex min-w-0 flex-col gap-4"
     >
@@ -1201,16 +1645,8 @@ export const PartnersList = () => {
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() =>
-                push('/r/vx_admin_stations')
-              }
-            >
-              Cancel
-            </Button>
-            <Button type="button">{stationSaveLabel}</Button>
+            {renderBackButton('/partners?role=super-admin&section=platform-operations&action=station-registry', 'Back to Stations')}
+            <Button type="button" onClick={() => void saveRegistryForm('stations', 'stationId', '/partners?role=super-admin&section=platform-operations&action=stations')}>{stationSaveLabel}</Button>
           </div>
         </div>
       </div>
@@ -1275,8 +1711,55 @@ export const PartnersList = () => {
       commandPolicy: 'Remote commands allowed for assigned station',
       notes: 'Primary BattleX charger record.',
     },
+    {
+      cpid: '13074944',
+      chargerName: 'ABB Star Charger 2',
+      manufacturer: 'ABB',
+      model: 'Star Charger',
+      firmwareVersion: 'To be confirmed',
+      ocppVersion: 'OCPP 1.6J',
+      operatorId: 'wafienergy',
+      stationId: 'ST-SPL-KHI-001',
+      stationName: 'SPL Bahria - Karachi',
+      siteOwner: 'SPL Bahria',
+      equipmentName: 'ABB Star Charger 2',
+      evseCount: 'To be defined',
+      gridReference: 'Pending',
+      meterReference: 'Pending',
+      coordinates: 'Pending',
+      region: 'Sindh',
+      city: 'Karachi',
+      connectorCount: 'To be confirmed from StatusNotification',
+      connectorTypes: 'To be confirmed',
+      expectedUrl: 'ws://162.243.14.84:9000/ocpp/13074944',
+      status: 'Defined',
+      lastSeen: '',
+      registrationPolicy: 'Super Admin defined',
+      commandPolicy: 'Remote commands allowed for assigned station',
+      notes: 'SPL Bahria - Karachi charger record.',
+    },
   ];
 
+  const chargerRecords = [
+    ...definedChargers.filter(
+      (record) => !registryRecords.chargers.some((saved) => saved.cpid === record.cpid),
+    ),
+    ...(registryRecords.chargers as unknown as typeof definedChargers),
+  ];
+  const visibleChargerRecords =
+    isStationRegistry && isChargerRegistry
+      ? chargerRecords.filter(
+          (charger) => charger.stationId === selectedStationRecordId,
+        )
+      : chargerRecords;
+  const defaultChargerOperator =
+    operatorRecords.find(
+      (operator) => operator.operatorId === selectedOperatorRecordId,
+    ) ?? operatorRecords[0];
+  const defaultChargerStation =
+    stationRecords.find(
+      (station) => station.stationId === selectedStationRecordId,
+    ) ?? stationRecords[0];
   const blankCharger = {
     cpid: '',
     chargerName: '',
@@ -1284,20 +1767,21 @@ export const PartnersList = () => {
     model: '',
     firmwareVersion: '',
     ocppVersion: 'OCPP 1.6J',
-    operatorId: '',
-    stationId: '',
-    stationName: '',
-    siteOwner: '',
+    operatorId: defaultChargerOperator?.operatorId ?? '',
+    operatorName: defaultChargerOperator?.operatorName ?? '',
+    stationId: defaultChargerStation?.stationId ?? '',
+    stationName: defaultChargerStation?.stationName ?? '',
+    siteOwner: defaultChargerStation?.siteOwner ?? '',
     equipmentName: '',
     evseCount: '',
     gridReference: '',
     meterReference: '',
     coordinates: '',
-    region: '',
-    city: '',
+    region: defaultChargerStation?.region ?? '',
+    city: defaultChargerStation?.city ?? '',
     connectorCount: '',
     connectorTypes: '',
-    expectedUrl: '',
+    expectedUrl: 'ws://162.243.14.84:9000/ocpp/{CPID}',
     status: 'Draft',
     lastSeen: '',
     registrationPolicy: 'Super Admin defined',
@@ -1307,8 +1791,25 @@ export const PartnersList = () => {
   const requestedChargerId = searchParams.get('cpid');
   const selectedCharger = isChargerCreate
     ? blankCharger
-    : definedChargers.find((charger) => charger.cpid === requestedChargerId) ??
-      definedChargers[0];
+    : chargerRecords.find((charger) => charger.cpid === requestedChargerId) ??
+      chargerRecords[0];
+
+  useEffect(() => {
+    if (isTenantOperatorModify && requestedOperatorId) {
+      void loadRegistryForm('operators', requestedOperatorId);
+    } else if (isStationModify && requestedStationId) {
+      void loadRegistryForm('stations', requestedStationId);
+    } else if (isChargerModify && requestedChargerId) {
+      void loadRegistryForm('chargers', requestedChargerId);
+    }
+  }, [
+    isTenantOperatorModify,
+    isStationModify,
+    isChargerModify,
+    requestedOperatorId,
+    requestedStationId,
+    requestedChargerId,
+  ]);
   const chargerFormTitle = isChargerCreate
     ? 'Create Charger'
     : 'Modify Charger';
@@ -1329,7 +1830,7 @@ export const PartnersList = () => {
             variant="success"
             className="sm:self-start"
             onClick={() =>
-              push('/r/vx_create_charger')
+              push('/partners?role=super-admin&section=platform-operations&action=create-charger')
             }
           >
             <Plus className={buttonIconSize} />
@@ -1353,7 +1854,7 @@ export const PartnersList = () => {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {definedChargers.map((charger) => (
+            {visibleChargerRecords.map((charger) => (
               <TableRow key={charger.cpid}>
                 <TableCell className="font-medium">{charger.cpid}</TableCell>
                 <TableCell>{charger.chargerName}</TableCell>
@@ -1369,7 +1870,7 @@ export const PartnersList = () => {
                     onClick={() =>
                       push(
                         charger.cpid === '13074934'
-                          ? '/r/vx_modify_charger_13074934'
+                          ? '/partners?role=super-admin&section=platform-operations&action=modify-charger&cpid=13074934'
                           : `/${MenuSection.PARTNERS}?role=super-admin&section=platform-operations&action=modify-charger&cpid=${charger.cpid}`,
                       )
                     }
@@ -1383,7 +1884,7 @@ export const PartnersList = () => {
         </DataTable>
       </div>
 
-      {definedChargers.map((charger) => (
+      {visibleChargerRecords.map((charger) => (
         <div key={`${charger.cpid}-detail`} className="grid gap-4 lg:grid-cols-2">
           <div className="rounded-md border border-border bg-card p-5 shadow-sm">
             <h3 className="text-base font-semibold">Charger Identity</h3>
@@ -1409,28 +1910,13 @@ export const PartnersList = () => {
               <div><span className="text-muted-foreground">Last seen</span><p className="font-medium">{charger.lastSeen || 'Never'}</p></div>
             </div>
           </div>
-          <div className="rounded-md border border-border bg-card p-5 shadow-sm lg:col-span-2">
-            <h3 className="text-base font-semibold">Station & Asset Mapping</h3>
-            <div className="mt-4 grid gap-3 text-sm sm:grid-cols-3">
-              <div><span className="text-muted-foreground">Station</span><p className="font-medium">{charger.stationName}</p></div>
-              <div><span className="text-muted-foreground">Site owner</span><p className="font-medium">{charger.siteOwner}</p></div>
-              <div><span className="text-muted-foreground">Equipment</span><p className="font-medium">{charger.equipmentName}</p></div>
-              <div><span className="text-muted-foreground">CPID</span><p className="font-medium">{charger.cpid}</p></div>
-              <div><span className="text-muted-foreground">EVSE count</span><p className="font-medium">{charger.evseCount}</p></div>
-              <div><span className="text-muted-foreground">Connector count</span><p className="font-medium">{charger.connectorCount}</p></div>
-              <div><span className="text-muted-foreground">Connector types</span><p className="font-medium">{charger.connectorTypes}</p></div>
-              <div><span className="text-muted-foreground">Grid reference</span><p className="font-medium">{charger.gridReference}</p></div>
-              <div><span className="text-muted-foreground">Meter reference</span><p className="font-medium">{charger.meterReference}</p></div>
-              <div><span className="text-muted-foreground">Coordinates</span><p className="font-medium">{charger.coordinates}</p></div>
-            </div>
-          </div>
         </div>
       ))}
     </div>
   );
 
   const operatorScopeId = 'wafienergy';
-  const operatorScopedChargers = definedChargers.filter(
+  const operatorScopedChargers = chargerRecords.filter(
     (charger) => charger.operatorId === operatorScopeId,
   );
   const requestedOperatorCpid = searchParams.get('cpid');
@@ -1441,6 +1927,7 @@ export const PartnersList = () => {
 
   const chargerFormPanel = (
     <div
+      data-registry-form="chargers"
       key={isChargerCreate ? 'create-charger' : selectedCharger.cpid}
       className="flex min-w-0 flex-col gap-4"
     >
@@ -1453,16 +1940,8 @@ export const PartnersList = () => {
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() =>
-                push('/r/vx_admin_chargers')
-              }
-            >
-              Cancel
-            </Button>
-            <Button type="button">{chargerSaveLabel}</Button>
+            {renderBackButton('/partners?role=super-admin&section=platform-operations&action=charger-registry', 'Back to Chargers')}
+            <Button type="button" onClick={() => void saveRegistryForm('chargers', 'cpid', '/partners?role=super-admin&section=platform-operations&action=chargers')}>{chargerSaveLabel}</Button>
           </div>
         </div>
       </div>
@@ -1470,7 +1949,7 @@ export const PartnersList = () => {
       <div className="rounded-md border border-border bg-card p-5 shadow-sm">
         <h3 className="text-base font-semibold">Charger Identity</h3>
         <div className="mt-4 grid gap-4 md:grid-cols-3">
-          <div className="grid gap-2"><Label htmlFor="cpid">CPID</Label><Input id="cpid" defaultValue={selectedCharger.cpid} /></div>
+          <div className="grid gap-2"><Label htmlFor="cpid">CPID</Label><Input id="cpid" defaultValue={selectedCharger.cpid} onChange={(event) => { if (!isChargerCreate) return; const expectedUrl = document.querySelector<HTMLInputElement>('[data-registry-form="chargers"] #expectedUrl'); if (expectedUrl) expectedUrl.value = `ws://162.243.14.84:9000/ocpp/${encodeURIComponent(event.target.value.trim() || '{CPID}')}`; }} /></div>
           <div className="grid gap-2"><Label htmlFor="chargerName">Charger Name</Label><Input id="chargerName" defaultValue={selectedCharger.chargerName} /></div>
           <div className="grid gap-2"><Label htmlFor="manufacturer">Manufacturer</Label><Input id="manufacturer" defaultValue={selectedCharger.manufacturer} /></div>
           <div className="grid gap-2"><Label htmlFor="model">Model</Label><Input id="model" defaultValue={selectedCharger.model} /></div>
@@ -1482,7 +1961,8 @@ export const PartnersList = () => {
       <div className="rounded-md border border-border bg-card p-5 shadow-sm">
         <h3 className="text-base font-semibold">Assignment</h3>
         <div className="mt-4 grid gap-4 md:grid-cols-3">
-          <div className="grid gap-2"><Label htmlFor="operatorId">Operator</Label><Input id="operatorId" defaultValue={selectedCharger.operatorId} /></div>
+          <div className="grid gap-2"><Label htmlFor="operatorName">Operator Name</Label><Input id="operatorName" defaultValue={'operatorName' in selectedCharger ? selectedCharger.operatorName : defaultChargerOperator?.operatorName ?? ''} /></div>
+          <div className="grid gap-2"><Label htmlFor="operatorId">Operator ID</Label><Input id="operatorId" defaultValue={selectedCharger.operatorId} /></div>
           <div className="grid gap-2"><Label htmlFor="stationId">Station ID</Label><Input id="stationId" defaultValue={selectedCharger.stationId} /></div>
           <div className="grid gap-2"><Label htmlFor="stationName">Station</Label><Input id="stationName" defaultValue={selectedCharger.stationName} /></div>
           <div className="grid gap-2"><Label htmlFor="status">Status</Label><Input id="status" defaultValue={selectedCharger.status} /></div>
@@ -1539,6 +2019,22 @@ export const PartnersList = () => {
       stationName: 'BattleX',
       cpid: '13074934',
       chargerName: 'ABB Star Charger',
+      manufacturer: 'ABB',
+      model: 'Star Charger',
+      currentFirmware: 'To be confirmed',
+      targetFirmware: 'v2.9.4',
+      connectorCount: 'To be confirmed from StatusNotification',
+      scheduleWindow: 'Sunday 02:00-04:00 Asia/Karachi',
+      command: 'UpdateFirmware',
+      statusFlow: 'FirmwareStatusNotification',
+      pushStatus: 'Not scheduled',
+    },
+    {
+      operatorId: 'wafienergy',
+      stationId: 'ST-BATX-LHE-001',
+      stationName: 'BattleX',
+      cpid: '13074944',
+      chargerName: 'ABB Star Charger 2',
       manufacturer: 'ABB',
       model: 'Star Charger',
       currentFirmware: 'To be confirmed',
@@ -1772,48 +2268,41 @@ export const PartnersList = () => {
 
   const operatorMetrics = [
     {
-      label: 'Online Stations',
-      value: '118',
-      detail: '94% available',
+      label: 'Assigned Stations',
+      value: '2',
+      detail: 'BattleX and SPL Bahria',
     },
     {
-      label: 'Active Sessions',
-      value: '42',
-      detail: '16 DC fast charging',
+      label: 'Available Chargers',
+      value: '0 / 2',
+      detail: 'awaiting reconnect',
     },
     {
       label: 'Energy Today',
-      value: '8.7 MWh',
-      detail: '+12% vs yesterday',
+      value: '0.25 kWh',
+      detail: 'test transaction only',
     },
     {
-      label: 'Revenue Today',
-      value: '$3,480',
-      detail: 'Settled and pending',
+      label: 'Fault Tickets',
+      value: '1',
+      detail: 'brief connection',
     },
   ];
 
   const operatorStationHealth = [
     {
-      station: 'PK-KHI-DC-018',
-      location: 'Karachi Central',
-      status: 'Online',
-      connectors: '4 / 4',
-      alert: 'Healthy',
-    },
-    {
-      station: 'PK-LHE-AC-044',
-      location: 'Lahore Ring Road',
+      station: 'BattleX Lab',
+      location: 'Operator-owned station',
       status: 'Attention',
-      connectors: '5 / 6',
-      alert: 'Heartbeat delay',
+      connectors: '0 / 1',
+      alert: 'Brief connection only',
     },
     {
-      station: 'PK-ISB-DC-006',
-      location: 'Islamabad Blue Area',
-      status: 'Online',
-      connectors: '2 / 2',
-      alert: 'Meter spike under review',
+      station: 'SPL Bahria - Karachi',
+      location: 'Operator-owned station',
+      status: 'Offline',
+      connectors: '0 / 1',
+      alert: 'No recent heartbeat',
     },
   ];
 
@@ -1825,71 +2314,64 @@ export const PartnersList = () => {
   ];
 
   const operatorTimeseries = [
-    { time: '00:00', energy: 1.2, revenue: 420, sessions: 10, failures: 1, reconnects: 0 },
-    { time: '04:00', energy: 0.8, revenue: 290, sessions: 7, failures: 0, reconnects: 1 },
-    { time: '08:00', energy: 2.6, revenue: 880, sessions: 21, failures: 2, reconnects: 1 },
-    { time: '12:00', energy: 3.9, revenue: 1320, sessions: 34, failures: 1, reconnects: 2 },
-    { time: '16:00', energy: 5.1, revenue: 1780, sessions: 47, failures: 3, reconnects: 1 },
-    { time: '20:00', energy: 4.4, revenue: 1510, sessions: 39, failures: 1, reconnects: 2 },
+    { time: '00:00', energy: 0, revenue: 0, sessions: 0, failures: 0, reconnects: 0 },
+    { time: '04:00', energy: 0, revenue: 0, sessions: 0, failures: 0, reconnects: 0 },
+    { time: '08:00', energy: 0.25, revenue: 0, sessions: 1, failures: 0, reconnects: 1 },
+    { time: '12:00', energy: 0, revenue: 0, sessions: 0, failures: 1, reconnects: 0 },
+    { time: '16:00', energy: 0, revenue: 0, sessions: 0, failures: 0, reconnects: 0 },
+    { time: '20:00', energy: 0, revenue: 0, sessions: 0, failures: 0, reconnects: 0 },
   ];
 
   const operatorUtilization = [
-    { location: 'Karachi', utilization: 82 },
-    { location: 'Lahore', utilization: 74 },
-    { location: 'Islamabad', utilization: 68 },
-    { location: 'Multan', utilization: 53 },
-    { location: 'Peshawar', utilization: 41 },
+    { location: 'BattleX Lab', utilization: 42 },
+    { location: 'SPL Bahria', utilization: 18 },
+    { location: 'Charger 13074934', utilization: 56 },
+    { location: 'Charger 13074944', utilization: 24 },
+    { location: 'Production readiness', utilization: 38 },
   ];
 
   const operatorAlerts = [
     {
-      time: '15:55',
-      source: 'PK-KHI-DC-018',
-      signal: 'Connector fault',
-      severity: 'Critical',
-    },
-    {
-      time: '15:38',
-      source: 'PK-LHE-AC-044',
-      signal: 'Heartbeat delay',
+      time: '06:25 UTC',
+      source: '13074934',
+      signal: 'Disconnected after short session',
       severity: 'Warning',
     },
     {
-      time: '14:22',
-      source: 'PK-ISB-DC-006',
-      signal: 'Meter spike',
+      time: '08:24 UTC',
+      source: '13074944',
+      signal: 'SPL Bahria charger disconnected',
+      severity: 'Warning',
+    },
+    {
+      time: '09:29 UTC',
+      source: 'TEST-RFID',
+      signal: 'Completed test transaction',
       severity: 'Review',
     },
   ];
 
   const operatorFailureEvents = [
     {
-      time: '16:18',
-      station: 'PK-KHI-DC-018',
-      type: 'Transaction Failure',
-      detail: 'Authorize accepted, StartTransaction timeout',
-      status: 'Investigating',
-    },
-    {
-      time: '15:42',
-      station: 'PK-LHE-AC-044',
+      time: '06:25 UTC',
+      station: 'BattleX Lab',
       type: 'Reconnect',
-      detail: 'Station reconnected after 2 missed heartbeats',
-      status: 'Recovered',
+      detail: 'Charger 13074934 connected briefly then disconnected',
+      status: 'Needs field validation',
     },
     {
-      time: '13:09',
-      station: 'PK-ISB-DC-006',
-      type: 'Transaction Failure',
-      detail: 'Payment capture failed before session start',
-      status: 'Retry queued',
-    },
-    {
-      time: '09:31',
-      station: 'PK-MUX-AC-012',
+      time: '08:24 UTC',
+      station: 'SPL Bahria - Karachi',
       type: 'Reconnect',
-      detail: 'OCPP websocket restored',
-      status: 'Recovered',
+      detail: 'Charger 13074944 connected then closed before stable heartbeat',
+      status: 'Needs field validation',
+    },
+    {
+      time: '09:29 UTC',
+      station: 'BattleX Lab',
+      type: 'Transaction Failure',
+      detail: 'Only TEST-RFID transaction exists; no customer session yet',
+      status: 'Commercial setup pending',
     },
   ];
 
@@ -1923,91 +2405,99 @@ export const PartnersList = () => {
     },
   } satisfies ChartConfig;
 
+  const stationCharger = liveDashboard?.chargers?.find(
+    (charger) => charger.chargerId === '13074934',
+  );
+  const stationPowerKw = Number(
+    stationCharger?.latestMeter?.['Power.Active.Import']?.value ?? 0,
+  ) / 1000;
+  const stationSoc = Number(stationCharger?.latestMeter?.SoC?.value ?? 0);
+  const stationTransactionRows = transactionRows.filter(
+    (row) => String(row.charger_id ?? '') === '13074934',
+  );
+  const todayKey = new Date().toISOString().slice(0, 10);
+  const stationEnergyToday = stationTransactionRows
+    .filter((row) => String(row.start_time ?? '').slice(0, 10) === todayKey)
+    .reduce((sum, row) => sum + Number(row.energy_kwh ?? 0), 0);
+  const stationStatus = stationCharger?.connectorStatus || stationCharger?.status || 'Unknown';
+  const stationConnected = Boolean(stationCharger?.liveSocket);
+
   const stationMetrics = [
     {
-      label: 'Station Status',
-      value: 'Online',
-      detail: 'Last heartbeat 12 sec ago',
+      label: 'Charger Status',
+      value: stationStatus,
+      detail: stationConnected
+        ? `Live socket · last data ${stationCharger?.lastSeen ? new Date(stationCharger.lastSeen).toLocaleTimeString() : 'now'}`
+        : `Last seen ${stationCharger?.lastSeen ? new Date(stationCharger.lastSeen).toLocaleString() : 'Never'}`,
     },
     {
-      label: 'Connector Availability',
-      value: '2 / 3',
-      detail: '1 connector requires attention',
+      label: 'Charger Connectors',
+      value: '2',
+      detail: `C${stationCharger?.connectorId || 1} ${stationStatus.toLowerCase()}`,
     },
     {
-      label: 'Current Session',
-      value: '18.4 kWh',
-      detail: 'EV-7741 on connector 1',
+      label: 'Today kWh',
+      value: stationEnergyToday.toFixed(2),
+      detail: `${stationTransactionRows.filter((row) => String(row.start_time ?? '').slice(0, 10) === todayKey).length} sessions today`,
     },
     {
-      label: 'Power Draw',
-      value: '62 kW',
-      detail: 'Temperature 36 C',
+      label: 'Live Power / SoC',
+      value: `${stationPowerKw.toFixed(1)} kW`,
+      detail: `Battery ${stationSoc.toFixed(0)}%`,
     },
   ];
 
-  const stationLoadSeries = [
-    { time: '10:00', power: 18, temperature: 31, sessions: 1 },
-    { time: '11:00', power: 44, temperature: 33, sessions: 2 },
-    { time: '12:00', power: 58, temperature: 35, sessions: 2 },
-    { time: '13:00', power: 62, temperature: 36, sessions: 1 },
-    { time: '14:00', power: 50, temperature: 35, sessions: 1 },
-    { time: '15:00', power: 67, temperature: 37, sessions: 2 },
-  ];
+  const stationMeterEvents = (liveDashboard?.recentEvents ?? [])
+    .filter((event) => event.chargerId === '13074934' && event.action === 'MeterValues')
+    .slice(0, 12)
+    .reverse();
+  const stationLoadSeries = stationMeterEvents.length
+    ? stationMeterEvents.map((event) => {
+        const payload = event.payload && typeof event.payload === 'object'
+          ? event.payload as Record<string, unknown>
+          : {};
+        const meterValues = Array.isArray(payload.meterValue) ? payload.meterValue : [];
+        const latest = meterValues[0] && typeof meterValues[0] === 'object'
+          ? meterValues[0] as Record<string, unknown>
+          : {};
+        const samples = Array.isArray(latest.sampledValue) ? latest.sampledValue : [];
+        const sampleValue = (measurand: string) => {
+          const sample = samples.find((entry) => entry && typeof entry === 'object' && (entry as Record<string, unknown>).measurand === measurand) as Record<string, unknown> | undefined;
+          return Number(sample?.value ?? 0);
+        };
+        return {
+          time: event.ts ? new Date(event.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '',
+          power: sampleValue('Power.Active.Import') / 1000,
+          temperature: sampleValue('SoC'),
+          sessions: 1,
+        };
+      })
+    : [{ time: 'Now', power: stationPowerKw, temperature: stationSoc, sessions: stationTransactionRows.some((row) => row.status === 'ACTIVE') ? 1 : 0 }];
 
-  const stationConnectors = [
-    {
-      connector: 'Connector 1',
-      type: 'DC CCS',
-      status: 'Charging',
-      power: '62 kW',
-      detail: 'EV-7741 active',
-    },
-    {
-      connector: 'Connector 2',
-      type: 'DC CCS',
-      status: 'Available',
-      power: '0 kW',
-      detail: 'Ready for session',
-    },
-    {
-      connector: 'Connector 3',
-      type: 'Type 2',
-      status: 'Faulted',
-      power: '0 kW',
-      detail: 'Ground fault detected',
-    },
-  ];
+  const stationConnectors = [1, 2].map((connectorId) => {
+    const isCurrent = stationCharger?.connectorId === connectorId;
+    return {
+      connector: `C${connectorId}`,
+      type: 'Charger 13074934',
+      status: isCurrent ? stationStatus : 'Available',
+      power: `${isCurrent ? stationPowerKw.toFixed(1) : '0.0'} kW`,
+      detail: isCurrent && stationStatus === 'Charging' ? `Vehicle charging · SoC ${stationSoc.toFixed(0)}%` : 'No active vehicle',
+    };
+  });
 
-  const stationSessions = [
-    {
-      time: '15:18',
-      user: 'RFID-2048',
-      connector: 'Connector 1',
-      energy: '18.4 kWh',
-      status: 'Charging',
-    },
-    {
-      time: '14:42',
-      user: 'App session',
-      connector: 'Connector 2',
-      energy: '26.1 kWh',
-      status: 'Completed',
-    },
-    {
-      time: '13:55',
-      user: 'RFID-1182',
-      connector: 'Connector 3',
-      energy: '0.0 kWh',
-      status: 'Failed start',
-    },
-  ];
+  const stationSessions = stationTransactionRows.slice(0, 10).map((row) => ({
+    time: row.start_time ? new Date(String(row.start_time)).toLocaleString() : '',
+    user: `Transaction ${String(row.id ?? '')}`,
+    connector: `C${String(row.connector_id ?? '')}`,
+    energy: `${Number(row.energy_kwh ?? 0).toFixed(2)} kWh`,
+    status: String(row.status ?? ''),
+  }));
 
   const stationDiagnostics = [
-    ['Heartbeat', 'Healthy', '12 sec ago'],
-    ['OCPP Latency', 'Normal', '48 ms'],
-    ['Meter Sample', 'Streaming', 'Every 30 sec'],
-    ['Firmware', 'Up to date', 'v2.9.4'],
+    ['Heartbeat', stationCharger?.online ? 'Live' : 'Stale', stationCharger?.lastHeartbeat ? `Last heartbeat ${new Date(stationCharger.lastHeartbeat).toLocaleString()}` : 'No heartbeat received'],
+    ['WebSocket', stationConnected ? 'Connected' : 'Disconnected', stationConnected ? 'Live OCPP socket' : 'No active socket'],
+    ['Meter Sample', stationCharger?.latestMeter && Object.keys(stationCharger.latestMeter).length ? 'Live' : 'Missing', stationCharger?.latestMeter && Object.keys(stationCharger.latestMeter).length ? `Power ${stationPowerKw.toFixed(1)} kW · SoC ${stationSoc.toFixed(0)}%` : 'No production telemetry'],
+    ['Firmware', 'View only', 'Operator or Super Admin approves updates'],
     ['Config Access', 'View only', 'Operator escalation required'],
   ];
 
@@ -2017,7 +2507,7 @@ export const PartnersList = () => {
       color: '#22c55e',
     },
     temperature: {
-      label: 'Temperature',
+      label: 'SoC',
       color: '#f59e0b',
     },
     sessions: {
@@ -2770,103 +3260,529 @@ export const PartnersList = () => {
 
   const operatorPortal = (
     <div className="flex min-w-0 flex-col gap-5">
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        {operatorMetrics.map((metric) => (
-          <div
-            key={metric.label}
-            className="rounded-md border border-border bg-card p-5 shadow-sm"
-          >
-            <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
-              {metric.label}
-            </p>
-            <p className="mt-2 text-3xl font-semibold text-foreground">
-              {metric.value}
-            </p>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {metric.detail}
-            </p>
-          </div>
-        ))}
-      </div>
-
-      <div className="grid gap-5 xl:grid-cols-[1.35fr_0.65fr]">
-        <div className="rounded-md border border-border bg-card p-5 shadow-sm">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+      <div className="grid gap-4 xl:grid-cols-[1fr_360px]">
+        <div className="rounded-md border border-border bg-[#26002e] p-5 text-white shadow-sm">
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
             <div>
-              <h2 className={heading2Style}>Operator Charger Fleet</h2>
-              <p className="mt-1 text-sm text-muted-foreground">
-                Chargers assigned to this operator across every station, with CPID, firmware, OCPP endpoint, and dashboard access.
+              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-blue-200">
+                Operator Dashboard
+              </p>
+              <h2 className="mt-2 text-2xl font-semibold">
+                Wafi / Shell network needs reconnect attention
+              </h2>
+              <p className="mt-2 max-w-3xl text-sm text-blue-100">
+                Daily view for assigned stations, charger availability, test activity, field actions, and team follow-up.
               </p>
             </div>
-            <Button type="button" variant="outline" className="sm:self-start">
-              Export Report
-            </Button>
+            <div className="rounded-md border border-white/15 bg-white/10 px-5 py-4 text-center">
+              <p className="text-4xl font-semibold">0 / 2</p>
+              <p className="mt-1 text-xs font-semibold uppercase tracking-[0.16em] text-blue-100">
+                chargers available now
+              </p>
+            </div>
           </div>
-
-          <div className="mt-5 overflow-hidden rounded-md border border-border bg-background">
-            <DataTable>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>CPID</TableHead>
-                  <TableHead>Station</TableHead>
-                  <TableHead>Charger</TableHead>
-                  <TableHead>Firmware</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Last Seen</TableHead>
-                  <TableHead>Dashboard</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {operatorScopedChargers.map((charger) => (
-                  <TableRow key={charger.cpid}>
-                    <TableCell className="font-medium">{charger.cpid}</TableCell>
-                    <TableCell>{charger.stationName}</TableCell>
-                    <TableCell>{charger.chargerName}</TableCell>
-                    <TableCell>{charger.firmwareVersion}</TableCell>
-                    <TableCell>
-                      <span
-                        className={`rounded-md px-2 py-1 text-xs font-medium ${
-                          charger.status === 'Defined'
-                            ? 'bg-blue-100 text-blue-700'
-                            : 'bg-green-100 text-green-700'
-                        }`}
-                      >
-                        {charger.status}
-                      </span>
-                    </TableCell>
-                    <TableCell>{charger.lastSeen || 'Never'}</TableCell>
-                    <TableCell>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() =>
-                          push('/r/vx_battlex_charger')
-                        }
-                      >
-                        Open
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </DataTable>
+          <div className="mt-5 grid gap-3 md:grid-cols-4">
+            {operatorMetrics.map((metric) => (
+              <div
+                key={metric.label}
+                className="rounded-md border border-white/15 bg-white/10 p-4"
+              >
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-blue-100">
+                  {metric.label}
+                </p>
+                <p className="mt-2 text-2xl font-semibold">{metric.value}</p>
+                <p className="mt-1 text-xs text-blue-100">{metric.detail}</p>
+              </div>
+            ))}
           </div>
         </div>
 
         <div className="rounded-md border border-border bg-card p-5 shadow-sm">
-          <h2 className={heading2Style}>Operator Workflows</h2>
-          <div className="mt-4 flex flex-col gap-2">
-            {operatorWorkflows.map((workflow) => (
-              <Button
-                key={workflow}
-                type="button"
-                variant="outline"
-                className="justify-start"
+          <h2 className={heading2Style}>Operator Scope</h2>
+          <div className="mt-4 grid gap-3">
+            {[
+              ['Role', 'Day-to-day operations only'],
+              ['Network', 'Wafi / Shell assigned stations'],
+              ['Pricing', 'No tariff authority'],
+            ].map(([label, detail]) => (
+              <div
+                key={label}
+                className="rounded-md border border-border bg-background p-3"
               >
-                {workflow}
-              </Button>
+                <p className="text-sm font-semibold">{label}</p>
+                <p className="mt-1 text-xs text-muted-foreground">{detail}</p>
+              </div>
             ))}
           </div>
+        </div>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        {[
+          ['Charger Availability', 'Critical', 'Both assigned chargers need reconnect validation.', 'bg-red-100 text-red-700'],
+          ['Session Activity', 'Test only', 'Only one completed TEST-RFID transaction is visible.', 'bg-amber-100 text-amber-700'],
+          ['Field Follow-up', '2 stations', 'BattleX and SPL Bahria require operational review.', 'bg-blue-100 text-blue-700'],
+          ['Team Queue', '4 actions', 'Review incidents, export transactions, assign maintenance, invite staff.', 'bg-purple-100 text-purple-700'],
+        ].map(([title, status, detail, badgeClass]) => (
+          <div key={title} className="rounded-md border border-border bg-card p-5 shadow-sm">
+            <div className="flex items-start justify-between gap-3">
+              <p className="font-semibold">{title}</p>
+              <span className={`rounded-md px-2 py-1 text-xs font-semibold ${badgeClass}`}>
+                {status}
+              </span>
+            </div>
+            <p className="mt-3 text-sm text-muted-foreground">{detail}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="grid gap-5 xl:grid-cols-[1fr_420px]">
+        <div className="flex min-w-0 flex-col gap-5">
+          <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className={heading2Style}>Assigned Station Health</h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Operator-owned stations, connector availability, and current field status.
+                </p>
+              </div>
+              <span className="rounded-md bg-red-100 px-2 py-1 text-xs font-semibold text-red-700">
+                needs attention
+              </span>
+            </div>
+            <div className="mt-4 overflow-hidden rounded-md border border-border bg-background">
+              <DataTable>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Station</TableHead>
+                    <TableHead>Location</TableHead>
+                    <TableHead>Connectors</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Alert</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {operatorStationHealth.map((station) => (
+                    <TableRow key={station.station}>
+                      <TableCell className="font-medium">{station.station}</TableCell>
+                      <TableCell>{station.location}</TableCell>
+                      <TableCell>{station.connectors}</TableCell>
+                      <TableCell>
+                        <span className="rounded-md bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-700">
+                          {station.status}
+                        </span>
+                      </TableCell>
+                      <TableCell>{station.alert}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </DataTable>
+            </div>
+          </div>
+
+          <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <h2 className={heading2Style}>Assigned Charger Fleet</h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  CPIDs in the operator scope with firmware, last-seen state, and drill-down access.
+                </p>
+              </div>
+              <Button type="button" variant="outline" className="sm:self-start">
+                Export Report
+              </Button>
+            </div>
+            <div className="mt-4 overflow-hidden rounded-md border border-border bg-background">
+              <DataTable>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>CPID</TableHead>
+                    <TableHead>Station</TableHead>
+                    <TableHead>Charger</TableHead>
+                    <TableHead>Firmware</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Last Seen</TableHead>
+                    <TableHead>Dashboard</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {operatorScopedChargers.map((charger) => (
+                    <TableRow key={charger.cpid}>
+                      <TableCell className="font-medium">{charger.cpid}</TableCell>
+                      <TableCell>{charger.stationName}</TableCell>
+                      <TableCell>{charger.chargerName}</TableCell>
+                      <TableCell>{charger.firmwareVersion}</TableCell>
+                      <TableCell>
+                        <span
+                          className={`rounded-md px-2 py-1 text-xs font-medium ${
+                            charger.status === 'Defined'
+                              ? 'bg-blue-100 text-blue-700'
+                              : 'bg-green-100 text-green-700'
+                          }`}
+                        >
+                          {charger.status}
+                        </span>
+                      </TableCell>
+                      <TableCell>{charger.lastSeen || 'Never'}</TableCell>
+                      <TableCell>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() =>
+                            push(`/partners?role=operator&section=daily-operations&action=charger-dashboard&cpid=${charger.cpid}`)
+                          }
+                        >
+                          Open
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </DataTable>
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h2 className={heading2Style}>Operator Action Inbox</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Practical next steps for the assigned network.
+              </p>
+            </div>
+            <span className="rounded-md bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-700">
+              4 open
+            </span>
+          </div>
+          <div className="mt-4 grid max-h-[520px] gap-3 overflow-y-auto pr-1">
+            {operatorWorkflows.map((workflow, index) => (
+              <div
+                key={workflow}
+                className="rounded-md border border-border bg-background p-4"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-semibold">{workflow}</p>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {index === 0
+                        ? 'Review offline and stale station states before customer sessions begin.'
+                        : index === 1
+                          ? 'Download the current transaction evidence for operator reporting.'
+                          : index === 2
+                            ? 'Assign a field owner for reconnect and charger validation.'
+                            : 'Add the staff member who will monitor daily station operations.'}
+                    </p>
+                  </div>
+                  <span className="rounded-md bg-blue-100 px-2 py-1 text-xs font-semibold text-blue-700">
+                    action
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  const liveDashboardCounts = liveDashboard?.counts ?? {};
+  const liveDashboardChargers = liveDashboard?.chargers ?? [];
+  const callMonitoringEvents = liveDashboard?.recentEvents ?? [];
+  const liveDashboardSourceLabel = liveDashboardError
+    ? 'Feed unavailable'
+    : liveDashboardUpdatedAt
+      ? `Updated ${liveDashboardUpdatedAt}`
+      : 'Waiting for live data';
+  const offlineChargerCount = liveDashboardCounts.offlineChargers ??
+    liveDashboardChargers.filter((charger) => !charger.online).length;
+
+  const formatDashboardTime = (value?: string | null) => {
+    if (!value) return 'Never';
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
+  };
+
+  const superUserStatusCards: Array<[string, string, string, string]> = [
+    [
+      'Charger Connectivity',
+      offlineChargerCount ? 'Critical' : 'Healthy',
+      `${offlineChargerCount} of ${liveDashboardCounts.chargers ?? liveDashboardChargers.length} chargers offline.`,
+      offlineChargerCount ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700',
+    ],
+    [
+      'Activity Proof',
+      liveDashboardCounts.sessions24h ? 'Active' : 'Quiet',
+      `${liveDashboardCounts.sessions24h ?? 0} sessions in the last 24 hours.`,
+      liveDashboardCounts.sessions24h ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700',
+    ],
+    [
+      'Energy',
+      `${(liveDashboardCounts.energy24hKwh ?? 0).toFixed(2)} kWh`,
+      `${(liveDashboardCounts.totalEnergyKwh ?? 0).toFixed(2)} kWh total recorded.`,
+      'bg-blue-100 text-blue-700',
+    ],
+  ];
+
+  const superUserStationRows: Array<[string, string, string, string, string]> =
+    liveDashboardChargers.map((charger) => [
+      charger.displayName || charger.chargerId || 'Unknown station',
+      charger.operator || 'Unassigned',
+      charger.chargerId || 'Unknown',
+      formatDashboardTime(charger.lastHeartbeat || charger.lastSeen),
+      charger.online ? 'Online' : 'Offline',
+    ]);
+
+  const fourHoursAgo = Date.now() - 4 * 60 * 60 * 1000;
+  const eventIssues: Array<[string, string, string, string]> = callMonitoringEvents
+    .filter((event) => {
+      const timestamp = event.ts ? new Date(event.ts).getTime() : 0;
+      const payload = event.payload && typeof event.payload === 'object'
+        ? event.payload as Record<string, unknown>
+        : {};
+      const errorCode = String(payload.errorCode ?? '');
+      const vendorErrorCode = String(payload.vendorErrorCode ?? '');
+      const info = String(payload.info ?? '');
+      const meaningfulError = Boolean(event.error) ||
+        (errorCode && errorCode !== 'NoError') ||
+        (vendorErrorCode && vendorErrorCode !== '0') ||
+        /error|fault|power.?loss|offline|failed/i.test(info);
+      return timestamp >= fourHoursAgo && meaningfulError;
+    })
+    .map((event) => {
+      const payload = event.payload && typeof event.payload === 'object'
+        ? event.payload as Record<string, unknown>
+        : {};
+      const code = payload.vendorErrorCode ||
+        (payload.errorCode !== 'NoError' ? payload.errorCode : '') ||
+        event.error || 'Issue reported';
+      const info = payload.info ? ` - ${String(payload.info)}` : '';
+      return [
+        `${event.chargerId || 'Unknown charger'} - ${event.action || event.eventType || 'OCPP event'}`,
+        `Error ${String(code)}${info}`,
+        'Platform Operations',
+        'review',
+      ];
+    });
+  const offlineIssues: Array<[string, string, string, string]> = liveDashboardChargers
+    .filter((charger) => !charger.online)
+    .map((charger) => [
+      `${charger.chargerId || 'Unknown'} - ${charger.displayName || 'Station'}`,
+      'No live heartbeat / charger offline',
+      charger.operator || 'Unassigned',
+      'offline',
+    ]);
+  const superUserAttentionRows = [...eventIssues, ...offlineIssues];
+
+  const superUserCommandCenter = (
+    <div className="flex min-w-0 flex-col gap-5">
+      <div className="rounded-md border border-border bg-[#26002e] p-5 text-white shadow-sm">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-blue-200">
+              {selectedRole.id === 'operator'
+                ? 'Operator Command Center'
+                : 'Super User Command Center'}
+            </p>
+            <h2 className="mt-2 text-2xl font-semibold">Network operations</h2>
+            <p className="mt-2 max-w-3xl text-sm text-blue-100">
+              {selectedRole.id === 'operator'
+                ? 'Live operational status for your stations, chargers, and sessions.'
+                : 'Live operational status across operators, stations, chargers, and sessions.'}
+            </p>
+          </div>
+          <Button type="button" variant="outline" onClick={() => void refreshLiveDashboard()} disabled={liveDashboardLoading}>
+            {liveDashboardLoading ? 'Refreshing' : 'Refresh'}
+          </Button>
+        </div>
+        {liveDashboardError && <p className="mt-3 text-sm text-red-200">{liveDashboardError}</p>}
+      </div>
+
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_420px]">
+        <div className="flex min-w-0 flex-col gap-5">
+          <div className="rounded-md border border-border bg-card p-4 shadow-sm">
+            <div className="grid gap-4 md:grid-cols-3">
+              {superUserStatusCards.map(([title, status, detail, badgeClass], index) => (
+                <div key={title} className={`min-w-0 ${index < superUserStatusCards.length - 1 ? 'border-b border-border pb-4 md:border-b-0 md:border-r md:pb-0 md:pr-4' : ''}`}>
+                  <div className="flex items-start justify-between gap-3">
+                    <p className="text-sm font-semibold">{title}</p>
+                    <span className={`shrink-0 rounded-md px-2 py-1 text-xs font-semibold ${badgeClass}`}>{status}</span>
+                  </div>
+                  <p className="mt-2 text-sm text-muted-foreground">{detail}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className={heading2Style}>Station Health</h2>
+                <p className="mt-1 text-sm text-muted-foreground">Status by site, operator, charger, and last contact.</p>
+              </div>
+              <span className={`rounded-md px-2 py-1 text-xs font-semibold ${offlineChargerCount ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
+                {offlineChargerCount ? 'needs attention' : 'healthy'}
+              </span>
+            </div>
+            <div className="mt-4 overflow-hidden rounded-md border border-border bg-background">
+              <DataTable>
+                <TableHeader><TableRow><TableHead>Station</TableHead><TableHead>Operator</TableHead><TableHead>Charger</TableHead><TableHead>Last Contact</TableHead><TableHead>Status</TableHead></TableRow></TableHeader>
+                <TableBody>
+                  {superUserStationRows.map(([station, operator, charger, lastContact, status]) => (
+                    <TableRow key={charger}>
+                      <TableCell className="font-medium">{station}</TableCell><TableCell>{operator}</TableCell><TableCell>{charger}</TableCell><TableCell>{lastContact}</TableCell>
+                      <TableCell><span className={`rounded-md px-2 py-1 text-xs font-semibold ${status === 'Online' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>{status}</span></TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </DataTable>
+            </div>
+          </div>
+        </div>
+
+        <div className="self-start rounded-md border border-border bg-card p-5 shadow-sm">
+          <div className="flex items-start justify-between gap-3">
+            <div><h2 className={heading2Style}>Charger Attention Inbox</h2><p className="mt-1 text-sm text-muted-foreground">Errors, power loss, fault codes, and offline chargers from the last 4 hours.</p></div>
+            <span className="rounded-md bg-red-100 px-2 py-1 text-xs font-semibold text-red-700">{superUserAttentionRows.length} open</span>
+          </div>
+          <div className="mt-4 grid max-h-[520px] gap-3 overflow-y-auto pr-1">
+            {superUserAttentionRows.length ? superUserAttentionRows.map(([title, issue, owner, status], index) => (
+              <div key={`${title}-${index}`} className="rounded-md border border-border bg-background p-3">
+                <div className="flex items-start justify-between gap-3"><div><p className="text-sm font-semibold">{title}</p><p className="mt-1 text-xs text-muted-foreground">{issue}</p></div><span className="rounded-md bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-700">{status}</span></div>
+                <p className="mt-2 text-xs font-medium text-muted-foreground">Owner: {owner}</p>
+              </div>
+            )) : <p className="rounded-md border border-border bg-background p-4 text-sm text-muted-foreground">No charger issues reported in the last 4 hours.</p>}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  const transactionsPanel = (
+    <div className="flex min-w-0 flex-col gap-4">
+      <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h2 className={heading2Style}>Transactions</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Session, meter, SoC, charger fault, error-code, and stop-reason history.
+            </p>
+            {transactionsError && <p className="mt-2 text-sm text-red-600">{transactionsError}</p>}
+          </div>
+          <Button type="button" variant="outline" onClick={() => void refreshTransactions()} disabled={transactionsLoading}>
+            {transactionsLoading ? 'Refreshing' : 'Refresh'}
+          </Button>
+        </div>
+      </div>
+
+      <div className="overflow-x-auto rounded-md border border-border bg-background">
+        <table className="min-w-[2200px] w-full text-sm">
+          <thead className="border-b border-border bg-muted/50 text-left">
+            <tr>
+              {['ID', 'CPID', 'Connector', 'Status', 'Start Time', 'Stop Time', 'Meter Start', 'Meter Stop', 'Energy kWh', 'Start SoC %', 'End SoC %', 'Error Code', 'Vendor Error Code', 'Error Info', 'Fault Started', 'Fault Cleared', 'Fault Last Seen', 'Stop Reason'].map((label) => (
+                <th key={label} className="whitespace-nowrap px-3 py-3 font-semibold">{label}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {transactionRows.length ? transactionRows.map((row) => (
+              <tr key={String(row.id)} className="border-b border-border last:border-b-0">
+                <td className="px-3 py-3 font-medium">{String(row.id ?? '')}</td>
+                <td className="px-3 py-3">{String(row.charger_id ?? '')}</td>
+                <td className="px-3 py-3">{String(row.connector_id ?? '')}</td>
+                <td className="px-3 py-3">{String(row.status ?? '')}</td>
+                <td className="whitespace-nowrap px-3 py-3">{formatDashboardTime(row.start_time as string | undefined)}</td>
+                <td className="whitespace-nowrap px-3 py-3">{formatDashboardTime(row.stop_time as string | undefined)}</td>
+                <td className="px-3 py-3">{String(row.meter_start ?? '')}</td>
+                <td className="px-3 py-3">{String(row.meter_stop ?? '')}</td>
+                <td className="px-3 py-3">{String(row.energy_kwh ?? '')}</td>
+                <td className="px-3 py-3">{String(row.start_soc_percent ?? '')}</td>
+                <td className="px-3 py-3">{String(row.end_soc_percent ?? '')}</td>
+                <td className="px-3 py-3">{String(row.error_code ?? '')}</td>
+                <td className="px-3 py-3">{String(row.vendor_error_code ?? '')}</td>
+                <td className="max-w-xs whitespace-normal px-3 py-3">{String(row.error_info ?? '')}</td>
+                <td className="whitespace-nowrap px-3 py-3">{formatDashboardTime(row.fault_started_at as string | undefined)}</td>
+                <td className="whitespace-nowrap px-3 py-3">{formatDashboardTime(row.fault_cleared_at as string | undefined)}</td>
+                <td className="whitespace-nowrap px-3 py-3">{formatDashboardTime(row.fault_last_seen_at as string | undefined)}</td>
+                <td className="px-3 py-3">{String(row.stop_reason ?? '')}</td>
+              </tr>
+            )) : (
+              <tr><td colSpan={18} className="px-4 py-10 text-center text-muted-foreground">{transactionsLoading ? 'Loading transactions...' : 'No transactions found.'}</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+
+  const callMonitoringPanel = (
+    <div className="flex min-w-0 flex-col gap-5">
+      <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">Super Admin</p>
+            <h2 className={heading2Style}>Monitoring</h2>
+            <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+              Recent OCPP calls received and acknowledged by the CSMS. Live data refreshes with the dashboard feed.
+            </p>
+          </div>
+          <Button type="button" variant="outline" onClick={() => void refreshLiveDashboard()}>
+            Refresh
+          </Button>
+        </div>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-3">
+        {[
+          ['Recent calls', String(callMonitoringEvents.length), liveDashboardSourceLabel],
+          ['Active sessions', String(liveDashboardCounts.activeSessions ?? 0), 'Transactions currently marked active'],
+          ['Queued commands', String(liveDashboardCounts.queuedCommands ?? 0), 'Backend command queue'],
+        ].map(([label, value, detail]) => (
+          <div key={label} className="rounded-md border border-border bg-card p-5 shadow-sm">
+            <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">{label}</p>
+            <p className="mt-2 text-2xl font-semibold">{value}</p>
+            <p className="mt-1 text-sm text-muted-foreground">{detail}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+        <h2 className={heading2Style}>Recent OCPP Calls</h2>
+        <div className="mt-4 overflow-hidden rounded-md border border-border bg-background">
+          <DataTable>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Time</TableHead>
+                <TableHead>Charger</TableHead>
+                <TableHead>Direction</TableHead>
+                <TableHead>Action</TableHead>
+                <TableHead>Status</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {callMonitoringEvents.length ? (
+                callMonitoringEvents.slice(0, 30).map((event, index) => (
+                  <TableRow key={`${event.ts ?? 'event'}-${event.chargerId ?? 'charger'}-${index}`}>
+                    <TableCell>{formatDashboardTime(event.ts)}</TableCell>
+                    <TableCell className="font-medium">{event.chargerId || 'Unknown'}</TableCell>
+                    <TableCell>{event.direction || 'Unknown'}</TableCell>
+                    <TableCell>{event.action || event.eventType || 'Acknowledgement'}</TableCell>
+                    <TableCell>
+                      <span className={`rounded-md px-2 py-1 text-xs font-semibold ${event.error ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
+                        {event.error || 'OK'}
+                      </span>
+                    </TableCell>
+                  </TableRow>
+                ))
+              ) : (
+                <TableRow>
+                  <TableCell colSpan={5} className="text-center text-sm text-muted-foreground">
+                    No recent calls found in the live dashboard feed.
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </DataTable>
         </div>
       </div>
     </div>
@@ -2888,7 +3804,7 @@ export const PartnersList = () => {
             <Button
               type="button"
               variant="success"
-              onClick={() => push('/r/vx_battlex_charger')}
+              onClick={() => push('/partners?role=operator&section=daily-operations&action=charger-dashboard&cpid=13074934')}
             >
               Voltaris Insights
             </Button>
@@ -2896,9 +3812,10 @@ export const PartnersList = () => {
               type="button"
               variant="outline"
               onClick={() =>
-                push('/r/vx_operator_fleet')
+                push('/partners?role=operator&section=fleet-setup&action=station-management')
               }
             >
+              <ArrowLeft className={buttonIconSize} />
               Back to Fleet
             </Button>
           </div>
@@ -2991,7 +3908,7 @@ export const PartnersList = () => {
         ].map(([label, value, detail]) => (
           <div
             key={label}
-            className="rounded-md border border-border bg-[#171717] p-5 text-white shadow-sm"
+            className="rounded-md border border-border bg-[#26002e] p-5 text-white shadow-sm"
           >
             <p className="text-xs font-medium uppercase tracking-[0.18em] text-white/60">
               {label}
@@ -3140,7 +4057,6 @@ export const PartnersList = () => {
               ['CSMS API', 'Healthy', '42 ms'],
               ['OCPP Gateway', 'Healthy', '99.9%'],
               ['Payment Capture', 'Degraded', '2 retries'],
-              ['Roaming Hub', 'Healthy', '18 partners'],
             ].map(([system, status, detail]) => (
               <div
                 key={system}
@@ -3218,14 +4134,14 @@ export const PartnersList = () => {
         <div className="rounded-md border border-border bg-card p-5 shadow-sm">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
             <div>
-              <h2 className={heading2Style}>Station Dashboard</h2>
+              <h2 className={heading2Style}>{stationCharger?.displayName || 'Charger 13074934'} Station Panel</h2>
               <p className="mt-1 text-sm text-muted-foreground">
-                Live device-level view for PK-KHI-DC-018: load, connector
-                state, active session, and local diagnostics.
+                Device-level view for one assigned charger only: connector
+                state, sessions, power, faults, and OCPP messages.
               </p>
             </div>
-            <div className="rounded-md border border-green-200 bg-green-50 px-3 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-green-700">
-              Online
+            <div className={`rounded-md border px-3 py-2 text-xs font-semibold uppercase tracking-[0.16em] ${stationConnected ? 'border-green-200 bg-green-50 text-green-700' : 'border-red-200 bg-red-50 text-red-700'}`}>
+              {stationConnected ? stationStatus : 'Disconnected'}
             </div>
           </div>
           <ChartContainer
@@ -3289,7 +4205,9 @@ export const PartnersList = () => {
                             ? 'bg-red-100 text-red-700'
                             : connector.status === 'Charging'
                               ? 'bg-blue-100 text-blue-700'
-                              : 'bg-green-100 text-green-700'
+                              : connector.status === 'Unavailable'
+                                ? 'bg-muted text-muted-foreground'
+                                : 'bg-green-100 text-green-700'
                         }`}
                       >
                         {connector.status}
@@ -3402,7 +4320,7 @@ export const PartnersList = () => {
                   )
                 }
                 className={`rounded-md border px-3 py-1.5 text-sm font-medium shadow-sm transition-colors ${
-                  selectedActionParam === getItemSlug(item.title)
+                  actionGroupParam === getItemSlug(item.title)
                     ? 'border-[#26002e] bg-[#26002e] text-white'
                     : 'border-border bg-background text-foreground hover:bg-accent hover:text-accent-foreground'
                 }`}
@@ -3412,18 +4330,24 @@ export const PartnersList = () => {
             ))}
           </div>
         </div>
-        <div className="flex flex-col gap-4 pt-3">
-          <div className="min-w-0 overflow-hidden rounded-md border border-border bg-[#292927] text-white shadow-sm">
-            {selectedRole.callout && (
-              <div className="border-b border-white/10 bg-[#123510] px-5 py-3 text-sm font-semibold text-green-400">
-                {selectedRole.callout}
+        {(selectedRole.callout || isTariffSection) && (
+          <div className="flex flex-col gap-4 pt-3">
+            <div className="min-w-0 overflow-hidden rounded-md border border-border bg-[#292927] text-white shadow-sm">
+              {selectedRole.callout && (
+                <div className="border-b border-white/10 bg-[#123510] px-5 py-3 text-sm font-semibold text-green-400">
+                  {selectedRole.callout}
+                </div>
+              )}
+              {isTariffSection &&
+                (showTariffForm ? tariffChangeForm : tariffHistoryList)}
               </div>
-            )}
-            {isTariffSection &&
-              (showTariffForm ? tariffChangeForm : tariffHistoryList)}
           </div>
-        </div>
+        )}
       </div>
+      {isSuperCommandCenter && superUserCommandCenter}
+      {(isSuperCommandCenter || isSuperReporting) && operatorAnalyticsDashboard}
+      {isSuperCallMonitoring && callMonitoringPanel}
+      {isSuperTransactions && transactionsPanel}
       {isAuditActivity && auditActivityList}
       {isDiagnosticsLogs && diagnosticsLogsList}
       {isEmergencyAccess && emergencyAccessList}
@@ -3441,9 +4365,20 @@ export const PartnersList = () => {
           ? operatorChargerDashboard
           : isOperatorAnalytics
             ? operatorAnalyticsDashboard
+            : isOperatorDashboard
+              ? (
+                  <>
+                    {superUserCommandCenter}
+                    {operatorAnalyticsDashboard}
+                  </>
+                )
             : operatorPortal)}
       {isStationDashboard && stationDashboard}
       {!isTariffSection &&
+        !isSuperCommandCenter &&
+        !isSuperReporting &&
+        !isSuperCallMonitoring &&
+        !isSuperTransactions &&
         !isAuditActivity &&
         !isDiagnosticsLogs &&
         !isEmergencyAccess &&

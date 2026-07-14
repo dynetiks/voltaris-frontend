@@ -96,6 +96,10 @@ async function refreshAccessToken(token: any) {
     console.error('Error refreshing access token:', error);
     return {
       ...token,
+      accessToken: undefined,
+      idToken: undefined,
+      refreshToken: undefined,
+      accessTokenExpires: 0,
       error: 'RefreshAccessTokenError',
     };
   }

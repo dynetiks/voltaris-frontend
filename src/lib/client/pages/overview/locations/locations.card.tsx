@@ -31,7 +31,7 @@ export const LocationsCard = () => {
         </div>
       </CardHeader>
       <CardContent className="size-full">
-        <LocationsMap />
+        <LocationsMap mapOnly />
       </CardContent>
     </Card>
   );

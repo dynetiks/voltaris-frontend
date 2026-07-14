@@ -1,7 +1,4 @@
-import Image from 'next/image';
 import React from 'react';
-
-const SIDEBAR_LOGO = '/images/login/logo-sidebar.png';
 
 export interface LogoProps {
   collapsed?: boolean;
@@ -17,14 +14,14 @@ export const Logo: React.FC<LogoProps> = (props: LogoProps) => {
           V
         </div>
       ) : (
-        <Image
-          src={SIDEBAR_LOGO}
-          alt="Voltaris"
-          width={280}
-          height={78}
-          className="h-auto w-full max-w-[280px] object-contain"
-          priority
-        />
+        <div className="flex flex-col leading-none">
+          <span className="text-2xl font-semibold lowercase tracking-[-0.03em] text-[#26002e]">
+            voltaris
+          </span>
+          <span className="mt-1 text-[9px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+            CSMS
+          </span>
+        </div>
       )}
     </div>
   );

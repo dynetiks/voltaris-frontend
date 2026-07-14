@@ -19,6 +19,9 @@ import { usePathname, useRouter } from 'next/navigation';
 import type { KeycloakUserIdentity } from '@lib/providers/auth-provider/keycloak-auth-provider';
 import { Loader2 } from 'lucide-react';
 import { heading2Style } from '@lib/client/styles/page';
+import { cn } from '@lib/utils/cn';
+import { PageBackButton } from '@lib/client/components/page-back-button';
+import { ClientErrorReporter } from '@lib/client/components/client-error-reporter';
 
 type AuthenticatedLayoutProps = {
   children: React.ReactNode;
@@ -35,6 +38,7 @@ export default function AuthenticatedLayout({
   const router = useRouter();
   const translate = useTranslate();
   const [showFirstLoginModal, setShowFirstLoginModal] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
 
   const { data, isLoading } = useIsAuthenticated();
   const { data: identity } = useGetIdentity<KeycloakUserIdentity>();
@@ -99,13 +103,26 @@ export default function AuthenticatedLayout({
 
   return (
     <div className="relative">
-      <div className="min-h-screen ml-20 bg-slate-50 bg-cover bg-bottom bg-no-repeat bg-[url(/gradient.svg)] dark:bg-[#0a0f18] dark:bg-[url(/gradient-dark.svg)]">
-        <MainMenu activeSection={activeSection as MenuSection} />
+      <ClientErrorReporter />
+      <div
+        className={cn(
+          'min-h-screen bg-slate-50 bg-cover bg-bottom bg-no-repeat bg-[url(/gradient.svg)] transition-[margin,padding] duration-300 dark:bg-[#0a0f18] dark:bg-[url(/gradient-dark.svg)]',
+          sidebarCollapsed ? 'ml-20 pl-4' : 'ml-[272px] pl-6',
+        )}
+      >
+        <MainMenu
+          activeSection={activeSection as MenuSection}
+          collapsed={sidebarCollapsed}
+          onCollapsedChange={setSidebarCollapsed}
+        />
         <div className="flex flex-col">
           <AppModal />
           <main className={`content-container ${routeClassName}`}>
             <div className="content-outer-wrap">
-              <div className="content-inner-wrap">{children}</div>
+              <div className="content-inner-wrap">
+                <PageBackButton />
+                {children}
+              </div>
             </div>
           </main>
         </div>

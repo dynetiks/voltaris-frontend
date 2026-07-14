@@ -240,6 +240,41 @@ export const GET_TRANSACTION_LIST_FOR_STATION = gql`
   }
 `;
 
+export const CHARGING_INFORMATION_SUMMARY_QUERY = gql`
+  query ChargingInformationSummary {
+    active: Transactions_aggregate(where: { isActive: { _eq: true } }) {
+      aggregate {
+        count
+        sum {
+          totalKwh
+        }
+      }
+    }
+    completed: Transactions_aggregate(where: { isActive: { _eq: false } }) {
+      aggregate {
+        count
+      }
+    }
+    energy: Transactions_aggregate {
+      aggregate {
+        sum {
+          totalKwh
+        }
+      }
+    }
+  }
+`;
+
+export const TRANSACTIONS_ENERGY_QUERY = gql`
+  query TransactionsEnergyList {
+    Transactions(order_by: { createdAt: desc }, limit: 1000) {
+      id
+      totalKwh
+      createdAt
+    }
+  }
+`;
+
 // TODO when possible, include the total time as well
 export const TRANSACTION_SUCCESS_RATE_QUERY = gql`
   query TransactionsSuccessRate {

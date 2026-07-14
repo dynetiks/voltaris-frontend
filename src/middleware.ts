@@ -6,6 +6,32 @@ import { getToken } from 'next-auth/jwt';
 import type { NextRequest } from 'next/server';
 import { NextResponse } from 'next/server';
 
+const AUTH_COOKIE_NAMES = [
+  'next-auth.session-token',
+  '__Secure-next-auth.session-token',
+  'next-auth.callback-url',
+  '__Secure-next-auth.callback-url',
+  'next-auth.csrf-token',
+  '__Host-next-auth.csrf-token',
+  'next-auth.pkce.code_verifier',
+  '__Secure-next-auth.pkce.code_verifier',
+  'next-auth.state',
+  '__Secure-next-auth.state',
+  'next-auth.nonce',
+  '__Secure-next-auth.nonce',
+];
+
+function redirectToLogin(request: NextRequest, error?: string) {
+  const loginUrl = new URL('/login', request.url);
+  if (error) {
+    loginUrl.searchParams.set('error', error);
+  }
+
+  const response = NextResponse.redirect(loginUrl);
+  AUTH_COOKIE_NAMES.forEach((name) => response.cookies.delete(name));
+  return response;
+}
+
 /**
  * Server-side authentication middleware.
  *
@@ -14,48 +40,10 @@ import { NextResponse } from 'next/server';
  * Unauthenticated requests are redirected to /login. Requests whose token
  * refresh failed (Keycloak session ended) are redirected with an error param.
  *
- * Protected: all routes except /login, /api/auth/**, /api/health, and
+ * Protected: all routes except /login, /api/auth/**, /api/health, /api/dashboard/**, /api/client-error, and
  * Next.js internal paths / static assets (see matcher below).
  */
-const opaqueRouteAliases: Record<string, string> = {
-  ch_8KQ2M7:
-    '/partners?role=operator&section=daily-operations&action=charger-dashboard&cpid=13074934',
-  vx_admin_logs:
-    '/partners?role=super-admin&section=oversight&action=diagnostics-logs',
-  vx_admin_operators:
-    '/partners?role=super-admin&section=platform-operations&action=tenant-operator-management',
-  vx_create_operator:
-    '/partners?role=super-admin&section=platform-operations&action=create-operator',
-  vx_modify_operator_wafienergy:
-    '/partners?role=super-admin&section=platform-operations&action=modify-operator&operatorId=wafienergy',
-  vx_admin_stations:
-    '/partners?role=super-admin&section=platform-operations&action=station-registry',
-  vx_create_station:
-    '/partners?role=super-admin&section=platform-operations&action=create-station',
-  vx_modify_station_battlex:
-    '/partners?role=super-admin&section=platform-operations&action=modify-station&stationId=BattleX',
-  vx_admin_chargers:
-    '/partners?role=super-admin&section=platform-operations&action=charger-registry',
-  vx_create_charger:
-    '/partners?role=super-admin&section=platform-operations&action=create-charger',
-  vx_modify_charger_13074934:
-    '/partners?role=super-admin&section=platform-operations&action=modify-charger&cpid=13074934',
-  vx_admin_firmware:
-    '/partners?role=super-admin&section=platform-operations&action=firmware',
-  vx_operator_fleet:
-    '/partners?role=operator&section=fleet-setup&action=station-management',
-  vx_operator_analytics:
-    '/partners?role=operator&section=daily-operations&action=reporting-and-analytics',
-  vx_battlex_charger:
-    '/partners?role=operator&section=daily-operations&action=charger-dashboard&cpid=13074934',
-  vx_station_dashboard:
-    '/partners?role=station&section=live-status&action=station-status',
-};
-
 export async function middleware(request: NextRequest) {
-  const opaqueMatch = request.nextUrl.pathname.match(/^\/(?:r|d)\/([^/]+)$/);
-  const opaqueTarget = opaqueMatch ? opaqueRouteAliases[opaqueMatch[1]] : null;
-
   const token = await getToken({
     req: request,
     secret: process.env.NEXTAUTH_SECRET,
@@ -66,29 +54,18 @@ export async function middleware(request: NextRequest) {
     !process.env.NEXT_PUBLIC_AUTH_PROVIDER ||
     process.env.NEXT_PUBLIC_AUTH_PROVIDER === 'generic'
   ) {
-    if (opaqueTarget) {
-      return NextResponse.rewrite(new URL(opaqueTarget, request.url));
-    }
-
     return NextResponse.next();
   }
 
-  // No valid session — redirect to login
+  // No valid session - redirect to login
   if (!token) {
     console.debug('No token found, redirecting to /login');
-    const loginUrl = new URL('/login', request.url);
-    return NextResponse.redirect(loginUrl);
+    return redirectToLogin(request);
   }
 
-  // Token refresh failed (e.g. Keycloak SSO session expired) — force re-login
+  // Token refresh failed (e.g. Keycloak SSO session expired) - force re-login
   if (token.error === 'RefreshAccessTokenError') {
-    const loginUrl = new URL('/login', request.url);
-    loginUrl.searchParams.set('error', 'SessionExpired');
-    return NextResponse.redirect(loginUrl);
-  }
-
-  if (opaqueTarget) {
-    return NextResponse.rewrite(new URL(opaqueTarget, request.url));
+    return redirectToLogin(request, 'SessionExpired');
   }
 
   return NextResponse.next();
@@ -98,14 +75,16 @@ export const config = {
   matcher: [
     /*
      * Match every path EXCEPT:
-     *   /login                  – the unauthenticated login page
-     *   /api/auth/**            – NextAuth sign-in / callback / sign-out endpoints
-     *   /api/health             – public health-check (load balancers, probes)
-     *   /_next/static/**        – Next.js compiled assets
-     *   /_next/image/**         – Next.js image optimisation endpoint
-     *   /favicon.ico            – browser favicon
-     *   /<file>.<ext>           – any root-level static file (svg, png, etc.)
+     *   /login                  - the unauthenticated login page
+     *   /api/auth/**            - NextAuth sign-in / callback / sign-out endpoints
+     *   /api/health             - public health-check (load balancers, probes)
+     *   /api/dashboard/**       - dashboard data proxy used by authenticated client pages
+     *   /api/client-error      - browser exception reporter
+     *   /_next/static/**        - Next.js compiled assets
+     *   /_next/image/**         - Next.js image optimisation endpoint
+     *   /favicon.ico            - browser favicon
+     *   /*.<ext>                - any static file (svg, png, etc.)
      */
-    '/((?!login|api/auth|api/health|_next/static|_next/image|favicon\\.ico|[^/]+\\.[^/]+$).*)',
+    '/((?!login|api/auth|api/health|api/dashboard|api/client-error|_next/static|_next/image|favicon\\.ico|.*\\.[^/]+$).*)',
   ],
 };

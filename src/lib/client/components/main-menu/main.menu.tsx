@@ -10,7 +10,6 @@ import {
   ChevronLeft,
   ChevronRight,
   EvCharger,
-  Home,
   ShieldCheck,
   UserCog,
 } from 'lucide-react';
@@ -34,6 +33,8 @@ export enum MenuSection {
 
 export interface MainMenuProps {
   activeSection: MenuSection;
+  collapsed: boolean;
+  onCollapsedChange: (collapsed: boolean) => void;
 }
 
 interface MenuChildItem {
@@ -58,30 +59,27 @@ interface MenuItem {
 // Slugs mirror partners.list.tsx getSectionSlug/getItemSlug output.
 const SUPER_ADMIN_SECTIONS: MenuChildSection[] = [
   {
-    label: 'Platform Operations',
-    section: 'platform-operations',
-    items: [
-      { label: 'Tenant / Operator Management', action: 'tenant-operator-management' },
-      { label: 'Firmware', action: 'firmware' },
-      { label: 'System Configuration', action: 'system-configuration' },
-    ],
-  },
-  {
-    label: 'Access Control',
-    section: 'access-control',
-    items: [
-      { label: 'Rights & Roles', action: 'rights-and-roles' },
-      { label: 'User Roles', action: 'user-roles' },
-    ],
-  },
-  {
     label: 'Oversight',
     section: 'oversight',
     items: [
-      { label: 'Audit Activity', action: 'audit-activity' },
-      { label: 'Diagnostics / Logs', action: 'diagnostics-logs' },
-      { label: 'Emergency Access', action: 'emergency-access' },
+      { label: 'Dashboard', action: 'dashboard' },
+      { label: 'Monitoring', action: 'call-monitoring' },
+      { label: 'Transactions', action: 'transactions' },
     ],
+  },
+  {
+    label: 'Platform Operations',
+    section: 'platform-operations',
+    items: [
+      { label: 'Operators', action: 'tenant-operator-management' },
+      { label: 'Stations & Chargers', action: 'stations-and-chargers' },
+      { label: 'Firmware', action: 'firmware' },
+    ],
+  },
+  {
+    label: 'Access',
+    section: 'access-control',
+    items: [{ label: 'Users', action: 'user-roles' }],
   },
   {
     label: 'Tariff',
@@ -94,26 +92,17 @@ const OPERATOR_SECTIONS: MenuChildSection[] = [
   {
     label: 'Daily Operations',
     section: 'daily-operations',
-    items: [
-      { label: 'Transactions', action: 'transactions' },
-      { label: 'Reporting & Analytics', action: 'reporting-and-analytics' },
-    ],
+    items: [{ label: 'Dashboard', action: 'dashboard' }],
   },
   {
-    label: 'Fleet Setup',
+    label: 'Fleet',
     section: 'fleet-setup',
-    items: [
-      { label: 'Station Management', action: 'station-management' },
-      { label: 'Location Management', action: 'location-management' },
-    ],
+    items: [{ label: 'Stations & Chargers', action: 'stations-and-chargers' }],
   },
   {
-    label: 'People & Access',
+    label: 'Team',
     section: 'people-and-access',
-    items: [
-      { label: 'RFID / Authorization Lists', action: 'rfid-authorization-lists' },
-      { label: 'Team Members', action: 'team-members' },
-    ],
+    items: [{ label: 'Team Members', action: 'team-members' }],
   },
 ];
 
@@ -121,19 +110,7 @@ const STATION_SECTIONS: MenuChildSection[] = [
   {
     label: 'Live Status',
     section: 'live-status',
-    items: [
-      { label: 'Station Status', action: 'station-status' },
-      { label: 'Connectors', action: 'connectors' },
-      { label: 'Sessions', action: 'sessions' },
-    ],
-  },
-  {
-    label: 'Diagnostics & Config',
-    section: 'diagnostics-and-config',
-    items: [
-      { label: 'Diagnostics / Logs', action: 'diagnostics-logs' },
-      { label: 'Configuration Keys', action: 'configuration-keys' },
-    ],
+    items: [{ label: 'Dashboard', action: 'dashboard' }],
   },
 ];
 
@@ -181,17 +158,6 @@ const getRoleAccent = (role: string) => {
         bar: 'bg-emerald-600',
         guide: 'border-emerald-200',
       };
-    case 'dashboard':
-      return {
-        roleText: 'text-foreground',
-        roleActiveBg: 'bg-accent',
-        sectionText: 'text-muted-foreground',
-        itemText: 'text-muted-foreground',
-        itemActiveText: 'text-primary',
-        itemActiveBg: 'bg-primary/10',
-        bar: 'bg-primary',
-        guide: 'border-border/50',
-      };
     default:
       return {
         roleText: 'text-foreground',
@@ -206,8 +172,11 @@ const getRoleAccent = (role: string) => {
   }
 };
 
-export const MainMenu = ({ activeSection }: MainMenuProps) => {
-  const [collapsed, setCollapsed] = useState(true);
+export const MainMenu = ({
+  activeSection,
+  collapsed,
+  onCollapsedChange,
+}: MainMenuProps) => {
   const menuRef = useRef<HTMLElement>(null);
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -230,12 +199,12 @@ export const MainMenu = ({ activeSection }: MainMenuProps) => {
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
-        setCollapsed(true);
+        onCollapsedChange(true);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, []);
+  }, [onCollapsedChange]);
 
   useEffect(() => {
     if (['super-admin', 'operator', 'station'].includes(activeRole)) {
@@ -251,12 +220,6 @@ export const MainMenu = ({ activeSection }: MainMenuProps) => {
   };
 
   const menuItems: MenuItem[] = [
-    {
-      href: `/${MenuSection.OVERVIEW}`,
-      label: 'Dashboard',
-      icon: <Home className={sidebarIconSize} />,
-      role: 'dashboard',
-    },
     {
       href: buildRoleHref(
         'super-admin',
@@ -296,9 +259,7 @@ export const MainMenu = ({ activeSection }: MainMenuProps) => {
     allowedRole === 'station'
       ? menuItems.filter((item) => item.role === 'station')
       : allowedRole === 'operator'
-        ? menuItems.filter(
-            (item) => item.role === 'dashboard' || item.role === 'operator',
-          )
+        ? menuItems.filter((item) => item.role === 'operator')
         : menuItems;
 
   const renderRoleSections = (item: MenuItem) => {
@@ -363,7 +324,7 @@ export const MainMenu = ({ activeSection }: MainMenuProps) => {
     <>
       <aside
         className={cn(
-          'fixed left-0 top-0 h-screen bg-card transition-all duration-300 z-40 flex flex-col shadow-md',
+          'fixed left-0 top-0 z-40 flex h-screen flex-col border-r border-border/80 bg-card shadow-md transition-all duration-300',
           collapsed ? 'w-20' : 'w-[272px]',
         )}
         ref={menuRef}
@@ -384,7 +345,7 @@ export const MainMenu = ({ activeSection }: MainMenuProps) => {
                   : `/${activeSection}` === item.href;
               const isRoleExpanded = Boolean(item.sections && openRoles[item.role]);
               const isTopLevelRole = Boolean(item.sections);
-              const isPrimaryNavItem = item.role === 'dashboard' || isTopLevelRole;
+              const isPrimaryNavItem = isTopLevelRole;
               const accent = getRoleAccent(item.role);
 
               return (
@@ -452,7 +413,7 @@ export const MainMenu = ({ activeSection }: MainMenuProps) => {
         {/* Collapse Toggle */}
         <Button
           variant="link"
-          onClick={() => setCollapsed(!collapsed)}
+          onClick={() => onCollapsedChange(!collapsed)}
           className="absolute top-0 right-0 transform translate-x-1/2 translate-y-[110px] size-8 bg-card text-accent-foreground border-transparent rounded-full shadow-md"
           aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
         >

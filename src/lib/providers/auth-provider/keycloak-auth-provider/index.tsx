@@ -13,7 +13,6 @@ import type { AuthProvider } from '@refinedev/core';
 import { HasuraHeader, HasuraRole } from '@lib/utils/hasura.types';
 import { Button } from '@lib/client/components/ui/button';
 import { ShieldCheck } from 'lucide-react';
-import Image from 'next/image';
 import React, { useState } from 'react';
 import { parseJwt, getTokenClaim } from '@lib/utils/jwt';
 
@@ -41,15 +40,12 @@ export interface KeycloakPermissions {
 
 const HASURA_CLAIM = config.hasuraClaim!;
 
-const LOGIN_SCENE_IMAGE = '/images/login/voltaris-login-scene.png';
-const LOGIN_LOGO_IMAGE = '/images/login/logo.png';
 
 /**
  * Keycloak Login Page Component
  * Keeps the Voltaris-branded entry page while delegating identity to Keycloak.
  */
 const KeycloakLoginPage: React.FC = () => {
-  const [sceneImageFailed, setSceneImageFailed] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
 
   const handleSignIn = async () => {
@@ -60,32 +56,26 @@ const KeycloakLoginPage: React.FC = () => {
   return (
     <div className="flex min-h-screen bg-[#060912]">
       <section className="relative hidden min-h-screen overflow-hidden bg-[#0b1633] lg:block lg:w-[60%]">
-        {!sceneImageFailed ? (
-          <Image
-            src={LOGIN_SCENE_IMAGE}
-            alt="Voltaris EV charging"
-            fill
-            className="object-cover object-center"
-            onError={() => setSceneImageFailed(true)}
-            priority
-          />
-        ) : (
-          <div className="flex h-full items-center justify-center text-sm text-white/50">
-            Voltaris
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(59,130,246,0.45),transparent_32%),radial-gradient(circle_at_70%_65%,rgba(38,0,46,0.95),transparent_42%),linear-gradient(135deg,#060912_0%,#0b1633_45%,#26002e_100%)]" />
+        <div className="absolute inset-0 opacity-35 [background-image:linear-gradient(rgba(255,255,255,0.09)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.09)_1px,transparent_1px)] [background-size:48px_48px]" />
+        <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-[#060912]/10 via-transparent to-[#060912]/35" />
+
+        <div className="pointer-events-none absolute left-8 top-6 z-10 sm:left-10">
+          <div className="text-4xl font-semibold lowercase tracking-[-0.03em] text-white sm:text-5xl">
+            voltaris
           </div>
-        )}
+          <div className="mt-1 text-xs font-medium uppercase tracking-[0.28em] text-white/45">
+            EV Charging CSMS
+          </div>
+        </div>
 
-        <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-[#060912]/30 via-transparent to-[#060912]/20" />
-
-        <div className="pointer-events-none absolute left-8 top-3 z-10 sm:left-10 sm:top-4">
-          <Image
-            src={LOGIN_LOGO_IMAGE}
-            alt="Voltaris"
-            width={560}
-            height={144}
-            className="h-auto w-[320px] max-w-[65vw] object-contain object-left sm:w-[440px] lg:w-[560px]"
-            priority
-          />
+        <div className="absolute bottom-14 left-10 max-w-xl text-white">
+          <p className="text-xs font-semibold uppercase tracking-[0.3em] text-blue-200">
+            Intelligence in motion
+          </p>
+          <h2 className="mt-4 text-5xl font-semibold leading-tight">
+            Monitor chargers, sessions, and network health in one place.
+          </h2>
         </div>
       </section>
 
@@ -231,14 +221,26 @@ export const createKeycloakAuthProvider = (): AuthProvider &
       if (!session) {
         return { authenticated: false, logout: true, redirectTo: '/login' };
       }
-      // Check if token refresh failed
+      // Check if token refresh failed. Clear the broken NextAuth cookie before
+      // redirecting so the browser does not keep rehydrating a poisoned session.
       if ((session as any).error === 'RefreshAccessTokenError') {
-        return { authenticated: false, logout: true, redirectTo: '/login' };
+        await signOut({ redirect: false });
+        if (typeof window !== 'undefined') {
+          window.location.replace('/login?error=SessionExpired');
+        }
+        return { authenticated: false, logout: true, redirectTo: '/login?error=SessionExpired' };
       }
       return { authenticated: true };
     },
     getIdentity: async () => {
       const session = await getSession();
+      if ((session as any)?.error === 'RefreshAccessTokenError') {
+        await signOut({ redirect: false });
+        if (typeof window !== 'undefined') {
+          window.location.replace('/login?error=SessionExpired');
+        }
+        return null;
+      }
       if (!session?.user) return null;
 
       return {

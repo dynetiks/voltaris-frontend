@@ -1,0 +1,4126 @@
+// SPDX-FileCopyrightText: 2025 Contributors to the CitrineOS Project
+//
+// SPDX-License-Identifier: Apache-2.0
+'use client';
+
+import { MenuSection } from '@lib/client/components/main-menu/main.menu';
+import { Table } from '@lib/client/components/table';
+import { Button } from '@lib/client/components/ui/button';
+import {
+  type ChartConfig,
+  ChartContainer,
+  ChartTooltip,
+  ChartTooltipContent,
+} from '@lib/client/components/ui/chart';
+import { Input } from '@lib/client/components/ui/input';
+import { Label } from '@lib/client/components/ui/label';
+import {
+  Table as DataTable,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@lib/client/components/ui/table';
+import { Textarea } from '@lib/client/components/ui/textarea';
+import { partnersColumns } from '@lib/client/pages/partners/columns';
+import { TenantPartnerClass } from '@lib/cls/tenant.partner.cls';
+import {
+  ACCESS_CONTROL_ROLE_OPTIONS,
+  ACCESS_CONTROL_SCOPES,
+  ROLE_PERMISSIONS,
+} from '@lib/providers/access-control-provider';
+import { PARTNERS_LIST_QUERY } from '@lib/queries/tenant.partners';
+import { ActionType, ResourceType, type User } from '@lib/utils/access.types';
+import { AccessDeniedFallback } from '@lib/utils/AccessDeniedFallback';
+import { DEFAULT_SORTERS } from '@lib/utils/consts';
+import { getPlainToInstanceOptions } from '@lib/utils/tables';
+import { CanAccess, useGetIdentity, useTranslate } from '@refinedev/core';
+import {
+  ArrowLeft,
+  BarChart3,
+  Building2,
+  CircleDollarSign,
+  ClipboardCheck,
+  Clock3,
+  Cpu,
+  FileText,
+  History,
+  MapPin,
+  Plug,
+  Plus,
+  ReceiptText,
+  ShieldCheck,
+  SlidersHorizontal,
+  TriangleAlert,
+  UserCog,
+  Users,
+  Zap,
+} from 'lucide-react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { type ChangeEvent, useEffect, useMemo, useState } from 'react';
+import {
+  Bar,
+  BarChart as RechartsBarChart,
+  CartesianGrid,
+  Line,
+  LineChart,
+  XAxis,
+  YAxis,
+} from 'recharts';
+import { toast } from 'sonner';
+import { heading2Style } from '@lib/client/styles/page';
+import {
+  tableHeaderWrapperFlex,
+  tableSearchFlex,
+  tableWrapperStyle,
+} from '@lib/client/styles/table';
+import { buttonIconSize } from '@lib/client/styles/icon';
+import { useColumnPreferences } from '@lib/client/hooks/useColumnPreferences';
+
+type KeycloakAdminUser = {
+  id: string;
+  name: string;
+  email: string;
+  username: string;
+  roles: string[];
+  status: string;
+  lastLogin: string;
+};
+
+type LiveDashboardCharger = {
+  chargerId?: string;
+  displayName?: string;
+  operator?: string;
+  status?: string;
+  online?: boolean;
+  lastSeen?: string | null;
+  lastHeartbeat?: string | null;
+  lastStatusNotification?: string | null;
+  errorCode?: string | null;
+};
+
+type LiveDashboardEvent = {
+  ts?: string;
+  chargerId?: string;
+  direction?: string;
+  action?: string | null;
+  eventType?: string | null;
+  error?: string | null;
+  payload?: unknown;
+};
+
+type LiveDashboardPayload = {
+  ok?: boolean;
+  generatedAt?: string;
+  scope?: {
+    operators?: string[];
+    activeOperator?: string;
+  };
+  counts?: {
+    chargers?: number;
+    onlineChargers?: number;
+    offlineChargers?: number;
+    activeSessions?: number;
+    sessions24h?: number;
+    energy24hKwh?: number;
+    totalEnergyKwh?: number;
+    queuedCommands?: number;
+  };
+  chargers?: LiveDashboardCharger[];
+  recentEvents?: LiveDashboardEvent[];
+  error?: string;
+};
+
+const toDashboardNumber = (value: unknown) => {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+};
+
+const toDashboardString = (value: unknown) => {
+  if (value === null || value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+
+  return undefined;
+};
+
+const normalizeLiveDashboardPayload = (payload: unknown): LiveDashboardPayload => {
+  const source = payload && typeof payload === 'object'
+    ? (payload as LiveDashboardPayload)
+    : {};
+  const sourceScope = source.scope && typeof source.scope === 'object'
+    ? source.scope
+    : {};
+  const sourceCounts = source.counts && typeof source.counts === 'object'
+    ? source.counts
+    : {};
+  const chargers = Array.isArray(source.chargers)
+    ? source.chargers
+        .map((charger) => {
+          if (!charger || typeof charger !== 'object') {
+            return null;
+          }
+
+          return {
+            chargerId: toDashboardString(charger.chargerId),
+            displayName: toDashboardString(charger.displayName),
+            operator: toDashboardString(charger.operator),
+            status: toDashboardString(charger.status),
+            online: Boolean(charger.online),
+            lastSeen: toDashboardString(charger.lastSeen) ?? null,
+            lastHeartbeat: toDashboardString(charger.lastHeartbeat) ?? null,
+            lastStatusNotification: toDashboardString(charger.lastStatusNotification) ?? null,
+            errorCode: toDashboardString(charger.errorCode) ?? null,
+          };
+        })
+        .filter((charger): charger is LiveDashboardCharger => Boolean(charger))
+    : [];
+
+  const recentEvents = Array.isArray(source.recentEvents)
+    ? source.recentEvents
+        .map((event) => {
+          if (!event || typeof event !== 'object') {
+            return null;
+          }
+
+          const record = event as LiveDashboardEvent;
+          return {
+            ts: toDashboardString(record.ts),
+            chargerId: toDashboardString(record.chargerId),
+            direction: toDashboardString(record.direction),
+            action: toDashboardString(record.action) ?? null,
+            eventType: toDashboardString(record.eventType) ?? null,
+            error: toDashboardString(record.error) ?? null,
+            payload: record.payload,
+          };
+        })
+        .filter((event): event is LiveDashboardEvent => Boolean(event))
+    : [];
+
+  return {
+    ok: source.ok !== false,
+    generatedAt: toDashboardString(source.generatedAt),
+    error: toDashboardString(source.error),
+    scope: {
+      operators: Array.isArray(sourceScope.operators)
+        ? sourceScope.operators
+            .map((operator) => toDashboardString(operator))
+            .filter((operator): operator is string => Boolean(operator))
+        : [],
+      activeOperator: toDashboardString(sourceScope.activeOperator),
+    },
+    counts: {
+      chargers: toDashboardNumber(sourceCounts.chargers),
+      onlineChargers: toDashboardNumber(sourceCounts.onlineChargers),
+      offlineChargers: toDashboardNumber(sourceCounts.offlineChargers),
+      activeSessions: toDashboardNumber(sourceCounts.activeSessions),
+      sessions24h: toDashboardNumber(sourceCounts.sessions24h),
+      energy24hKwh: toDashboardNumber(sourceCounts.energy24hKwh),
+      totalEnergyKwh: toDashboardNumber(sourceCounts.totalEnergyKwh),
+      queuedCommands: toDashboardNumber(sourceCounts.queuedCommands),
+    },
+    chargers,
+    recentEvents,
+  };
+};
+
+export const PartnersList = () => {
+  const { push } = useRouter();
+  const searchParams = useSearchParams();
+  const translate = useTranslate();
+  const { data: identity } = useGetIdentity<User>();
+  const roles = identity?.roles ?? [];
+  const allowedRole = roles.includes('station')
+    ? 'station'
+    : roles.includes('operator')
+      ? 'operator'
+      : 'super-admin';
+  const [tariffForm, setTariffForm] = useState({
+    changeDate: '',
+    changeTime: '',
+    currentRate: '',
+    changeDetails: '',
+    changeNote: '',
+  });
+  const [showTariffForm, setShowTariffForm] = useState(false);
+  const [showEmergencyAccessForm, setShowEmergencyAccessForm] = useState(false);
+  const [showCreateUserForm, setShowCreateUserForm] = useState(false);
+  const [operatorDetailTab, setOperatorDetailTab] = useState<
+    'profile' | 'technical'
+  >('profile');
+  const [operatorFormTab, setOperatorFormTab] = useState<
+    'profile' | 'technical'
+  >('profile');
+  const [logSearch, setLogSearch] = useState('');
+  const [logSourceFilter, setLogSourceFilter] = useState('All');
+  const [logEventFilter, setLogEventFilter] = useState('All');
+  const [logSeverityFilter, setLogSeverityFilter] = useState('All');
+  const [diagnosticLogs, setDiagnosticLogs] = useState<any[]>([]);
+  const [diagnosticLogsLoading, setDiagnosticLogsLoading] = useState(false);
+  const [diagnosticLogsError, setDiagnosticLogsError] = useState('');
+  const [keycloakUsers, setKeycloakUsers] = useState<KeycloakAdminUser[]>([]);
+  const [keycloakUsersLoading, setKeycloakUsersLoading] = useState(false);
+  const [keycloakUsersError, setKeycloakUsersError] = useState('');
+  const [createUserLoading, setCreateUserLoading] = useState(false);
+  const [emergencyAccessForm, setEmergencyAccessForm] = useState({
+    grantedTo: '',
+    startTime: '',
+    endTime: '',
+    note: '',
+  });
+  const [createUserForm, setCreateUserForm] = useState({
+    name: '',
+    email: '',
+    userRole: '',
+    temporaryPassword: '',
+    scope: '',
+    note: '',
+  });
+
+  const { renderedVisibleColumns, columnSelector } = useColumnPreferences(
+    partnersColumns,
+    ResourceType.PARTNERS,
+  );
+
+  const roleMatrix = useMemo(
+    () => [
+      {
+        id: 'super-admin',
+        scope: 'Platform-Wide',
+        title: 'Super Admin',
+        description:
+          'Single point of pricing accountability; no propose/approve chain.',
+        headerClassName: 'bg-[#4b0b0e] text-red-200',
+        sections: [
+          {
+            title: 'Oversight',
+            items: [
+              {
+                icon: BarChart3,
+                title: 'Dashboard',
+                description:
+                  'Network health, charger attention, OCPP activity, commercial readiness, and support queue across the full platform.',
+              },
+              {
+                icon: FileText,
+                title: 'Reporting',
+                description:
+                  'Platform-wide operational reporting for energy, sessions, failures, utilization, and reconnect activity.',
+              },
+              {
+                icon: History,
+                title: 'Call Monitoring',
+                description:
+                  'Recent OCPP calls, charger messages, acknowledgements, and errors across the platform.',
+              },
+
+            ],
+          },
+          {
+            title: 'Access Control',
+            items: [
+
+              {
+                icon: Users,
+                title: 'Users',
+                description: '',
+              },
+            ],
+          },
+          {
+            title: 'Platform Operations',
+            items: [
+              {
+                icon: Building2,
+                title: 'Operators',
+                description: '',
+              },
+              {
+                icon: MapPin,
+                title: 'Stations',
+                description: '',
+              },
+              {
+                icon: Plug,
+                title: 'Chargers',
+                description: '',
+              },
+              {
+                icon: Cpu,
+                title: 'Firmware',
+                description: '',
+              },
+            ],
+          },
+          {
+            title: 'Tariff',
+            highlight: true,
+            items: [
+              {
+                icon: CircleDollarSign,
+                title: 'Tariffs',
+                description:
+                  'Full pricing authority. Sets and changes rates directly with confirmation step and audit log on every change, no separate approver.',
+              },
+            ],
+          },
+        ],
+      },
+      {
+        id: 'operator',
+        scope: 'Organization-Wide',
+        title: 'Operator',
+        description:
+          'Single role for day-to-day operations, no pricing authority.',
+        headerClassName: 'bg-[#082f5f] text-blue-200',
+        sections: [
+          {
+            title: 'Daily Operations',
+            items: [
+              {
+                icon: ReceiptText,
+                title: 'Dashboard',
+                description: '',
+              },
+              {
+                icon: BarChart3,
+                title: 'Reporting',
+                description: '',
+              },
+            ],
+          },
+          {
+            title: 'Fleet Setup',
+            items: [
+              {
+                icon: Building2,
+                title: 'Stations',
+                description: '',
+              },
+
+            ],
+          },
+          {
+            title: 'People & Access',
+            items: [
+
+              {
+                icon: UserCog,
+                title: 'Team Members',
+                description:
+                  'Organization-level authorization: invite/remove staff within their own org, from Super Admin-approved role templates.',
+              },
+            ],
+          },
+        ],
+      },
+      {
+        id: 'station',
+        scope: 'Device-Level',
+        title: 'Station',
+        description:
+          'Fixed default profile, not configurable per user. Staff turn over frequently.',
+        headerClassName: 'bg-[#123510] text-green-300',
+        callout: 'Fixed permission set',
+        sections: [
+          {
+            title: 'Live Status',
+            items: [
+              {
+                icon: Zap,
+                title: 'Dashboard',
+                description: '',
+              },
+            ],
+          },
+        ],
+      },
+    ],
+    [],
+  );
+
+  const requestedRoleParam = searchParams.get('role') ?? allowedRole;
+  const selectedRoleParam =
+    allowedRole === 'super-admin' ? requestedRoleParam : allowedRole;
+  const selectedSectionParam =
+    searchParams.get('section') ??
+    (selectedRoleParam === 'super-admin'
+      ? 'oversight'
+      : selectedRoleParam === 'operator'
+        ? 'daily-operations'
+        : 'live-status');
+  const [selectedRoleIndex, setSelectedRoleIndex] = useState(() => {
+    const roleIndex = roleMatrix.findIndex(
+      (role) => role.id === selectedRoleParam,
+    );
+    return roleIndex >= 0 ? roleIndex : 0;
+  });
+  const [liveDashboard, setLiveDashboard] = useState<LiveDashboardPayload | null>(null);
+  const [liveDashboardError, setLiveDashboardError] = useState('');
+  const [liveDashboardLoading, setLiveDashboardLoading] = useState(false);
+  const [liveDashboardUpdatedAt, setLiveDashboardUpdatedAt] = useState('');
+  const selectedRole = roleMatrix[selectedRoleIndex] ?? roleMatrix[0];
+
+  useEffect(() => {
+    const roleIndex = roleMatrix.findIndex(
+      (role) => role.id === selectedRoleParam,
+    );
+    setSelectedRoleIndex(roleIndex >= 0 ? roleIndex : 0);
+  }, [roleMatrix, selectedRoleParam]);
+
+  useEffect(() => {
+    setShowTariffForm(false);
+  }, [selectedSectionParam]);
+
+  const getSectionSlug = (sectionTitle: string) =>
+    sectionTitle.toLowerCase().replace(/&/g, 'and').replace(/\s+/g, '-');
+
+  const getItemSlug = (itemTitle: string) =>
+    itemTitle
+      .toLowerCase()
+      .replace(/\//g, '')
+      .replace(/&/g, 'and')
+      .replace(/\s+/g, '-');
+
+  const selectedRoleSection =
+    selectedRole.sections.find(
+      (section) => getSectionSlug(section.title) === selectedSectionParam,
+    ) ?? selectedRole.sections[0];
+  const defaultActionParam = selectedRoleSection.items[0]
+    ? getItemSlug(selectedRoleSection.items[0].title)
+    : '';
+  const requestedActionParam = searchParams.get('action') ?? defaultActionParam;
+  const routeOnlyActionParams = [
+    'tenant-operator-management',
+    'create-operator',
+    'modify-operator',
+    'station-registry',
+    'create-station',
+    'modify-station',
+    'charger-registry',
+    'create-charger',
+    'modify-charger',
+    'station-management',
+    'user-roles',
+    'reporting-and-analytics',
+    'charger-dashboard',
+    'command-center',
+  ];
+  const selectedActionParam =
+    selectedRoleSection.items.some(
+      (item) => getItemSlug(item.title) === requestedActionParam,
+    ) || routeOnlyActionParams.includes(requestedActionParam)
+      ? requestedActionParam
+      : defaultActionParam;
+  const actionGroupParam = (() => {
+    if (
+      [
+        'operators',
+        'tenant-operator-management',
+        'create-operator',
+        'modify-operator',
+      ].includes(selectedActionParam)
+    ) {
+      return 'operators';
+    }
+    if (
+      ['stations', 'station-registry', 'create-station', 'modify-station'].includes(
+        selectedActionParam,
+      )
+    ) {
+      return 'stations';
+    }
+    if (
+      ['chargers', 'charger-registry', 'create-charger', 'modify-charger'].includes(
+        selectedActionParam,
+      )
+    ) {
+      return 'chargers';
+    }
+    if (['users', 'user-roles'].includes(selectedActionParam)) {
+      return 'users';
+    }
+    if (['reporting', 'reporting-and-analytics'].includes(selectedActionParam)) {
+      return 'reporting';
+    }
+    if (['dashboard', 'command-center'].includes(selectedActionParam)) {
+      return 'dashboard';
+    }
+    return selectedActionParam;
+  })();
+
+  const getOpaquePartnerRoute = (
+    roleId: string,
+    sectionTitle: string,
+    itemTitle: string,
+  ) => {
+    const sectionSlug = getSectionSlug(sectionTitle);
+    const itemSlug = getItemSlug(itemTitle);
+    const routeKey = `${roleId}:${sectionSlug}:${itemSlug}`;
+    const aliases: Record<string, string> = {
+      'super-admin:oversight:dashboard': `/${MenuSection.PARTNERS}?role=super-admin&section=oversight&action=dashboard`,
+      'super-admin:oversight:command-center': `/${MenuSection.PARTNERS}?role=super-admin&section=oversight&action=command-center`,
+      'super-admin:oversight:reporting': '/partners?role=super-admin&section=oversight&action=reporting-and-analytics',
+      'super-admin:oversight:reporting-and-analytics': '/partners?role=super-admin&section=oversight&action=reporting-and-analytics',
+      'super-admin:oversight:call-monitoring': '/partners?role=super-admin&section=oversight&action=call-monitoring',
+      'super-admin:oversight:diagnostics-logs': '/partners?role=super-admin&section=oversight&action=diagnostics-logs',
+      'super-admin:platform-operations:operators':
+        '/partners?role=super-admin&section=platform-operations&action=tenant-operator-management',
+      'super-admin:platform-operations:tenant-operator-management':
+        '/partners?role=super-admin&section=platform-operations&action=tenant-operator-management',
+      'super-admin:platform-operations:stations':
+        '/partners?role=super-admin&section=platform-operations&action=station-registry',
+      'super-admin:platform-operations:station-registry':
+        '/partners?role=super-admin&section=platform-operations&action=station-registry',
+      'super-admin:platform-operations:chargers':
+        '/partners?role=super-admin&section=platform-operations&action=charger-registry',
+      'super-admin:platform-operations:charger-registry':
+        '/partners?role=super-admin&section=platform-operations&action=charger-registry',
+      'super-admin:platform-operations:firmware': '/partners?role=super-admin&section=platform-operations&action=firmware',
+      'super-admin:access-control:users': '/partners?role=super-admin&section=access-control&action=user-roles',
+      'super-admin:access-control:user-roles': '/partners?role=super-admin&section=access-control&action=user-roles',
+      'operator:fleet-setup:stations':
+        '/partners?role=operator&section=fleet-setup&action=station-management',
+      'operator:fleet-setup:station-management': '/partners?role=operator&section=fleet-setup&action=station-management',
+      'operator:daily-operations:dashboard':
+        '/partners?role=operator&section=daily-operations&action=dashboard',
+      'operator:daily-operations:reporting':
+        '/partners?role=operator&section=daily-operations&action=reporting-and-analytics',
+      'operator:daily-operations:reporting-and-analytics':
+        '/partners?role=operator&section=daily-operations&action=reporting-and-analytics',
+      'station:live-status:dashboard': '/partners?role=station&section=live-status&action=dashboard',
+    };
+
+    return (
+      aliases[routeKey] ??
+      `/${MenuSection.PARTNERS}?role=${roleId}&section=${sectionSlug}&action=${itemSlug}`
+    );
+  };
+
+  const isTariffSection =
+    selectedRole.id === 'super-admin' &&
+    getSectionSlug(selectedRoleSection.title) === 'tariff';
+  const isSuperCommandCenter =
+    selectedRole.id === 'super-admin' &&
+    getSectionSlug(selectedRoleSection.title) === 'oversight' &&
+    ['dashboard', 'command-center'].includes(selectedActionParam);
+  const isSuperReporting =
+    selectedRole.id === 'super-admin' &&
+    getSectionSlug(selectedRoleSection.title) === 'oversight' &&
+    ['reporting', 'reporting-and-analytics'].includes(selectedActionParam);
+  const isSuperCallMonitoring =
+    selectedRole.id === 'super-admin' &&
+    getSectionSlug(selectedRoleSection.title) === 'oversight' &&
+    selectedActionParam === 'call-monitoring';
+  const isAuditActivity =
+    selectedRole.id === 'super-admin' &&
+    getSectionSlug(selectedRoleSection.title) === 'oversight' &&
+    selectedActionParam === 'audit-activity';
+  const isDiagnosticsLogs =
+    selectedRole.id === 'super-admin' &&
+    getSectionSlug(selectedRoleSection.title) === 'oversight' &&
+    selectedActionParam === 'diagnostics-logs';
+  const isEmergencyAccess =
+    selectedRole.id === 'super-admin' &&
+    getSectionSlug(selectedRoleSection.title) === 'oversight' &&
+    selectedActionParam === 'emergency-access';
+  const isUserRoles =
+    selectedRole.id === 'super-admin' &&
+    getSectionSlug(selectedRoleSection.title) === 'access-control' &&
+    ['users', 'user-roles'].includes(selectedActionParam);
+  const isRightsRoles =
+    selectedRole.id === 'super-admin' &&
+    getSectionSlug(selectedRoleSection.title) === 'access-control' &&
+    selectedActionParam === 'rights-and-roles';
+  const isTenantOperatorManagement =
+    selectedRole.id === 'super-admin' &&
+    getSectionSlug(selectedRoleSection.title) === 'platform-operations' &&
+    ['operators', 'tenant-operator-management'].includes(selectedActionParam);
+  const isTenantOperatorModify =
+    selectedRole.id === 'super-admin' &&
+    getSectionSlug(selectedRoleSection.title) === 'platform-operations' &&
+    selectedActionParam === 'modify-operator';
+  const isTenantOperatorCreate =
+    selectedRole.id === 'super-admin' &&
+    getSectionSlug(selectedRoleSection.title) === 'platform-operations' &&
+    selectedActionParam === 'create-operator';
+  const isStationRegistry =
+    selectedRole.id === 'super-admin' &&
+    getSectionSlug(selectedRoleSection.title) === 'platform-operations' &&
+    ['stations', 'station-registry'].includes(selectedActionParam);
+  const isStationCreate =
+    selectedRole.id === 'super-admin' &&
+    getSectionSlug(selectedRoleSection.title) === 'platform-operations' &&
+    selectedActionParam === 'create-station';
+  const isStationModify =
+    selectedRole.id === 'super-admin' &&
+    getSectionSlug(selectedRoleSection.title) === 'platform-operations' &&
+    selectedActionParam === 'modify-station';
+  const isChargerRegistry =
+    selectedRole.id === 'super-admin' &&
+    getSectionSlug(selectedRoleSection.title) === 'platform-operations' &&
+    ['chargers', 'charger-registry'].includes(selectedActionParam);
+  const isChargerCreate =
+    selectedRole.id === 'super-admin' &&
+    getSectionSlug(selectedRoleSection.title) === 'platform-operations' &&
+    selectedActionParam === 'create-charger';
+  const isChargerModify =
+    selectedRole.id === 'super-admin' &&
+    getSectionSlug(selectedRoleSection.title) === 'platform-operations' &&
+    selectedActionParam === 'modify-charger';
+  const isFirmwareManagement =
+    selectedRole.id === 'super-admin' &&
+    getSectionSlug(selectedRoleSection.title) === 'platform-operations' &&
+    selectedActionParam === 'firmware';
+  const isOperatorPortal = selectedRole.id === 'operator';
+  const isOperatorAnalytics =
+    selectedRole.id === 'operator' &&
+    selectedActionParam === 'reporting-and-analytics';
+  const isOperatorChargerDashboard =
+    selectedRole.id === 'operator' &&
+    selectedActionParam === 'charger-dashboard';
+  const isStationDashboard = selectedRole.id === 'station';
+
+  const renderBackButton = (href: string, label = 'Back') => (
+    <Button
+      type="button"
+      variant="outline"
+      onClick={() => push(href)}
+    >
+      <ArrowLeft className={buttonIconSize} />
+      {label}
+    </Button>
+  );
+
+  const refreshDiagnosticLogs = async () => {
+    setDiagnosticLogsLoading(true);
+    setDiagnosticLogsError('');
+
+    try {
+      const response = await fetch('/api/observability/logs', {
+        cache: 'no-store',
+      });
+
+      if (!response.ok) {
+        throw new Error(`OpenObserve query failed with ${response.status}`);
+      }
+
+      const payload = await response.json();
+      setDiagnosticLogs(Array.isArray(payload.logs) ? payload.logs : []);
+    } catch (error) {
+      setDiagnosticLogsError(
+        error instanceof Error ? error.message : 'Unable to load logs',
+      );
+    } finally {
+      setDiagnosticLogsLoading(false);
+    }
+  };
+
+  const refreshKeycloakUsers = async () => {
+    setKeycloakUsersLoading(true);
+    setKeycloakUsersError('');
+
+    try {
+      const response = await fetch('/api/admin/keycloak-users', {
+        cache: 'no-store',
+      });
+      const payload = await response.json();
+
+      if (!response.ok) {
+        throw new Error(payload.error || `User query failed with ${response.status}`);
+      }
+
+      setKeycloakUsers(Array.isArray(payload.users) ? payload.users : []);
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Unable to load Keycloak users';
+      setKeycloakUsersError(message);
+    } finally {
+      setKeycloakUsersLoading(false);
+    }
+  };
+
+  const refreshLiveDashboard = async () => {
+    setLiveDashboardLoading(true);
+
+    try {
+      const response = await fetch(`/api/dashboard/live?ts=${Date.now()}`, {
+        cache: 'no-store',
+      });
+      const contentType = response.headers.get('content-type') ?? '';
+
+      if (!contentType.includes('application/json')) {
+        throw new Error(`Dashboard returned ${response.status}`);
+      }
+
+      const payload = await response.json();
+
+      if (!response.ok || payload.ok === false) {
+        throw new Error(
+          payload.error || `Dashboard query failed with ${response.status}`,
+        );
+      }
+
+      setLiveDashboard(normalizeLiveDashboardPayload(payload));
+      setLiveDashboardUpdatedAt(new Date().toLocaleTimeString());
+      setLiveDashboardError('');
+    } catch (error) {
+      setLiveDashboardError(
+        error instanceof Error ? error.message : 'Unable to load dashboard data',
+      );
+    } finally {
+      setLiveDashboardLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isDiagnosticsLogs) {
+      void refreshDiagnosticLogs();
+    }
+  }, [isDiagnosticsLogs]);
+
+  useEffect(() => {
+    if (isUserRoles) {
+      void refreshKeycloakUsers();
+    }
+  }, [isUserRoles]);
+
+
+  useEffect(() => {
+    if (!isSuperCommandCenter) {
+      return;
+    }
+
+    void refreshLiveDashboard();
+    const interval = window.setInterval(() => {
+      void refreshLiveDashboard();
+    }, 15000);
+
+    return () => window.clearInterval(interval);
+  }, [isSuperCommandCenter]);
+
+  const tariffHistory = [
+    {
+      date: '2026-06-18',
+      time: '09:30',
+      rate: '$0.42 / kWh',
+      details: 'Peak-hour public charging tariff update',
+      note: 'Aligned with revised energy procurement cost.',
+    },
+    {
+      date: '2026-05-02',
+      time: '14:15',
+      rate: '$0.38 / kWh',
+      details: 'Standard DC fast charging rate adjustment',
+      note: 'Seasonal demand and operator margin review.',
+    },
+    {
+      date: '2026-03-21',
+      time: '11:00',
+      rate: '$0.34 / kWh',
+      details: 'Baseline network tariff published',
+      note: 'Initial platform pricing policy.',
+    },
+  ];
+
+  const definedOperators = [
+    {
+      operatorId: 'wafienergy',
+      operatorName: 'Wafi / Shell',
+      legalName: 'Wafi / Shell',
+      region: 'Pakistan',
+      city: 'Karachi / Lahore',
+      country: 'Pakistan',
+      timezone: 'Asia/Karachi',
+      currency: 'PKR',
+      status: 'Active',
+      primaryContact: 'Operations Lead',
+      primaryEmail: 'operator@voltaris.energy',
+      supportPhone: 'Not set',
+      billingEmail: 'billing@voltaris.energy',
+      stationScope: 'BattleX, SPL Bahria - Karachi',
+      chargerScope: '13074934, 13074944',
+      tariffGroup: 'Default network tariff',
+      ocppPolicy: 'OCPP 1.6J, heartbeat 300 sec',
+      commandPolicy: 'Remote commands allowed for assigned stations',
+      roamingStatus: 'Not enabled',
+      registrationNumber: 'Pending',
+      taxNumber: 'Pending',
+      technicalContact: 'OCPP Support',
+      technicalEmail: 'ocpp-support@voltaris.energy',
+      emergencyContact: 'Network Operations',
+      emergencyPhone: 'Not set',
+      escalationLevel: 'L2 operator support',
+      allowedUsers: 'Operator users assigned to Wafi / Shell',
+      permissionSet: 'Operate, command, billing, reporting',
+      billingCycle: 'Monthly',
+      revenueShare: 'Not configured',
+      paymentProvider: 'Not configured',
+      settlementAccount: 'Pending',
+      taxSettings: 'Pakistan standard tax policy pending',
+      offlineTimeout: '2 missed heartbeats',
+      alertPolicy: 'Socket disconnect, heartbeat stale, faulted connector',
+      maintenanceWindow: 'Sunday 02:00-04:00 Asia/Karachi',
+      slaLevel: 'Standard operations',
+      acceptedCpidPattern: 'Numeric CPID assigned by charger vendor',
+      websocketEndpoint: 'ws://162.243.14.84:9000/ocpp/{CPID}',
+      meterValuePolicy: '30-60 sec samples when charging',
+      firmwarePolicy: 'Super Admin approval required',
+      diagnosticsPolicy: 'Upload on request to Voltaris diagnostics storage',
+      firmwareFamilies: 'ABB Terra / Star charger firmware family',
+      stationOwner: 'Wafi / Shell',
+      equipmentName: 'ABB Star Charger',
+      evseCount: 'To be defined',
+      connectorCount: 'To be confirmed from StatusNotification',
+      gridReference: 'Pending',
+      meterReference: 'Pending',
+      coordinates: 'Pending',
+      createdBy: 'Super Admin',
+      createdDate: '2026-07-06',
+      lastModifiedBy: 'Super Admin',
+      lastModifiedDate: '2026-07-06',
+      agreementVersion: 'Pending operator agreement',
+      dataRetentionPolicy: 'OCPP events and commands retention pending',
+    },
+  ];
+
+  const operatorManagementPanel = (
+    <div className="flex min-w-0 flex-col gap-4">
+      <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h2 className={heading2Style}>Operator Management</h2>
+            <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+              Define the commercial, operational, technical, and access boundary for each charge point operator.
+            </p>
+          </div>
+          <Button
+            type="button"
+            variant="success"
+            className="sm:self-start"
+            onClick={() =>
+              push('/partners?role=super-admin&section=platform-operations&action=create-operator')
+            }
+          >
+            <Plus className={buttonIconSize} />
+            Add Operator
+          </Button>
+        </div>
+      </div>
+
+      <div className="overflow-hidden rounded-md border border-border bg-background">
+        <DataTable>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Operator ID</TableHead>
+              <TableHead>Name</TableHead>
+              <TableHead>Region / City</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead>Station Scope</TableHead>
+              <TableHead>Charger Scope</TableHead>
+              <TableHead>Command Policy</TableHead>
+              <TableHead>Action</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {definedOperators.map((operator) => (
+              <TableRow key={operator.operatorId}>
+                <TableCell className="font-medium">{operator.operatorId}</TableCell>
+                <TableCell>{operator.operatorName}</TableCell>
+                <TableCell>{operator.region} / {operator.city}</TableCell>
+                <TableCell>{operator.status}</TableCell>
+                <TableCell>{operator.stationScope}</TableCell>
+                <TableCell>{operator.chargerScope}</TableCell>
+                <TableCell>{operator.commandPolicy}</TableCell>
+                <TableCell>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() =>
+                      push(
+                        operator.operatorId === 'wafienergy'
+                          ? '/partners?role=super-admin&section=platform-operations&action=modify-operator&operatorId=wafienergy'
+                          : `/${MenuSection.PARTNERS}?role=super-admin&section=platform-operations&action=modify-operator&operatorId=${operator.operatorId}`,
+                      )
+                    }
+                  >
+                    Modify
+                  </Button>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </DataTable>
+      </div>
+
+      <div className="flex flex-wrap gap-2 rounded-md border border-border bg-card p-2 shadow-sm">
+        <Button
+          type="button"
+          variant={operatorDetailTab === 'profile' ? 'default' : 'outline'}
+          onClick={() => setOperatorDetailTab('profile')}
+        >
+          Operator Profile
+        </Button>
+        <Button
+          type="button"
+          variant={operatorDetailTab === 'technical' ? 'default' : 'outline'}
+          onClick={() => setOperatorDetailTab('technical')}
+        >
+          Technical & Assets
+        </Button>
+      </div>
+
+      {definedOperators.map((operator) => (
+        <div key={`${operator.operatorId}-detail`} className="grid gap-4 lg:grid-cols-2">
+          {operatorDetailTab === 'profile' && (
+            <>
+          <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+            <h3 className="text-base font-semibold">Core Identity</h3>
+            <div className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
+              <div><span className="text-muted-foreground">Legal name</span><p className="font-medium">{operator.legalName}</p></div>
+              <div><span className="text-muted-foreground">Registration number</span><p className="font-medium">{operator.registrationNumber}</p></div>
+              <div><span className="text-muted-foreground">Tax / VAT number</span><p className="font-medium">{operator.taxNumber}</p></div>
+              <div><span className="text-muted-foreground">Country</span><p className="font-medium">{operator.country}</p></div>
+              <div><span className="text-muted-foreground">Region / city</span><p className="font-medium">{operator.region} / {operator.city}</p></div>
+              <div><span className="text-muted-foreground">Status</span><p className="font-medium">{operator.status}</p></div>
+              <div><span className="text-muted-foreground">Timezone</span><p className="font-medium">{operator.timezone}</p></div>
+              <div><span className="text-muted-foreground">Currency</span><p className="font-medium">{operator.currency}</p></div>
+            </div>
+          </div>
+
+          <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+            <h3 className="text-base font-semibold">Contacts & Escalation</h3>
+            <div className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
+              <div><span className="text-muted-foreground">Primary contact</span><p className="font-medium">{operator.primaryContact}</p></div>
+              <div><span className="text-muted-foreground">Primary email</span><p className="font-medium">{operator.primaryEmail}</p></div>
+              <div><span className="text-muted-foreground">Technical contact</span><p className="font-medium">{operator.technicalContact}</p></div>
+              <div><span className="text-muted-foreground">Technical email</span><p className="font-medium">{operator.technicalEmail}</p></div>
+              <div><span className="text-muted-foreground">Billing email</span><p className="font-medium">{operator.billingEmail}</p></div>
+              <div><span className="text-muted-foreground">Emergency contact</span><p className="font-medium">{operator.emergencyContact}</p></div>
+              <div><span className="text-muted-foreground">Support phone</span><p className="font-medium">{operator.supportPhone}</p></div>
+              <div><span className="text-muted-foreground">Emergency phone</span><p className="font-medium">{operator.emergencyPhone}</p></div>
+              <div><span className="text-muted-foreground">Escalation level</span><p className="font-medium">{operator.escalationLevel}</p></div>
+            </div>
+          </div>
+
+          <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+            <h3 className="text-base font-semibold">Commercial Policy</h3>
+            <div className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
+              <div><span className="text-muted-foreground">Tariff group</span><p className="font-medium">{operator.tariffGroup}</p></div>
+              <div><span className="text-muted-foreground">Revenue share</span><p className="font-medium">{operator.revenueShare}</p></div>
+              <div><span className="text-muted-foreground">Billing cycle</span><p className="font-medium">{operator.billingCycle}</p></div>
+              <div><span className="text-muted-foreground">Payment provider</span><p className="font-medium">{operator.paymentProvider}</p></div>
+              <div><span className="text-muted-foreground">Settlement account</span><p className="font-medium">{operator.settlementAccount}</p></div>
+              <div><span className="text-muted-foreground">Tax settings</span><p className="font-medium">{operator.taxSettings}</p></div>
+              <div><span className="text-muted-foreground">Roaming / OCPI</span><p className="font-medium">{operator.roamingStatus}</p></div>
+            </div>
+          </div>
+
+            </>
+          )}
+          {operatorDetailTab === 'technical' && (
+            <>
+          <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+            <h3 className="text-base font-semibold">OCPP & Technical Policy</h3>
+            <div className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
+              <div><span className="text-muted-foreground">OCPP policy</span><p className="font-medium">{operator.ocppPolicy}</p></div>
+              <div><span className="text-muted-foreground">WebSocket endpoint</span><p className="font-medium">{operator.websocketEndpoint}</p></div>
+              <div><span className="text-muted-foreground">Accepted CPID pattern</span><p className="font-medium">{operator.acceptedCpidPattern}</p></div>
+              <div><span className="text-muted-foreground">Firmware families</span><p className="font-medium">{operator.firmwareFamilies}</p></div>
+              <div><span className="text-muted-foreground">Meter value policy</span><p className="font-medium">{operator.meterValuePolicy}</p></div>
+              <div><span className="text-muted-foreground">Firmware policy</span><p className="font-medium">{operator.firmwarePolicy}</p></div>
+              <div><span className="text-muted-foreground">Diagnostics policy</span><p className="font-medium">{operator.diagnosticsPolicy}</p></div>
+              <div><span className="text-muted-foreground">Command policy</span><p className="font-medium">{operator.commandPolicy}</p></div>
+            </div>
+          </div>
+
+          <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+            <h3 className="text-base font-semibold">Operational Rules</h3>
+            <div className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
+              <div><span className="text-muted-foreground">Offline timeout</span><p className="font-medium">{operator.offlineTimeout}</p></div>
+              <div><span className="text-muted-foreground">Alert policy</span><p className="font-medium">{operator.alertPolicy}</p></div>
+              <div><span className="text-muted-foreground">Maintenance window</span><p className="font-medium">{operator.maintenanceWindow}</p></div>
+              <div><span className="text-muted-foreground">SLA level</span><p className="font-medium">{operator.slaLevel}</p></div>
+            </div>
+          </div>
+
+          <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+            <h3 className="text-base font-semibold">Compliance & Audit</h3>
+            <div className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
+              <div><span className="text-muted-foreground">Created by</span><p className="font-medium">{operator.createdBy}</p></div>
+              <div><span className="text-muted-foreground">Created date</span><p className="font-medium">{operator.createdDate}</p></div>
+              <div><span className="text-muted-foreground">Last modified by</span><p className="font-medium">{operator.lastModifiedBy}</p></div>
+              <div><span className="text-muted-foreground">Last modified date</span><p className="font-medium">{operator.lastModifiedDate}</p></div>
+              <div><span className="text-muted-foreground">Agreement version</span><p className="font-medium">{operator.agreementVersion}</p></div>
+              <div><span className="text-muted-foreground">Data retention</span><p className="font-medium">{operator.dataRetentionPolicy}</p></div>
+            </div>
+          </div>
+            </>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+
+  const requestedOperatorId = searchParams.get('operatorId');
+  const blankOperator = {
+    operatorId: '',
+    operatorName: '',
+    legalName: '',
+    region: '',
+    city: '',
+    country: '',
+    timezone: '',
+    currency: '',
+    status: '',
+    primaryContact: '',
+    primaryEmail: '',
+    supportPhone: '',
+    billingEmail: '',
+    stationScope: '',
+    chargerScope: '',
+    tariffGroup: '',
+    ocppPolicy: '',
+    commandPolicy: '',
+    roamingStatus: '',
+    registrationNumber: '',
+    taxNumber: '',
+    technicalContact: '',
+    technicalEmail: '',
+    emergencyContact: '',
+    emergencyPhone: '',
+    escalationLevel: '',
+    allowedUsers: '',
+    permissionSet: '',
+    billingCycle: '',
+    revenueShare: '',
+    paymentProvider: '',
+    settlementAccount: '',
+    taxSettings: '',
+    offlineTimeout: '',
+    alertPolicy: '',
+    maintenanceWindow: '',
+    slaLevel: '',
+    acceptedCpidPattern: '',
+    websocketEndpoint: '',
+    meterValuePolicy: '',
+    firmwarePolicy: '',
+    diagnosticsPolicy: '',
+    firmwareFamilies: '',
+    stationOwner: '',
+    equipmentName: '',
+    evseCount: '',
+    connectorCount: '',
+    gridReference: '',
+    meterReference: '',
+    coordinates: '',
+    createdBy: '',
+    createdDate: '',
+    lastModifiedBy: '',
+    lastModifiedDate: '',
+    agreementVersion: '',
+    dataRetentionPolicy: '',
+  };
+  const selectedOperator = isTenantOperatorCreate
+    ? blankOperator
+    : definedOperators.find(
+        (operator) => operator.operatorId === requestedOperatorId,
+      ) ?? definedOperators[0];
+  const operatorFormTitle = isTenantOperatorCreate
+    ? 'Create Operator'
+    : 'Modify Operator';
+  const operatorFormDescription = isTenantOperatorCreate
+    ? 'Create a complete operator profile, then assign stations, CPIDs, policies, and contacts.'
+    : 'Update the operator profile, access scope, commercial policy, OCPP rules, and assigned station assets.';
+  const operatorSaveLabel = isTenantOperatorCreate
+    ? 'Create Operator'
+    : 'Save Operator';
+
+  const operatorModifyPage = (
+    <div
+      key={isTenantOperatorCreate ? 'create-operator' : selectedOperator.operatorId}
+      className="flex min-w-0 flex-col gap-4"
+    >
+      <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h2 className={heading2Style}>{operatorFormTitle}</h2>
+            <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+              {operatorFormDescription}
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {renderBackButton('/partners?role=super-admin&section=platform-operations&action=tenant-operator-management', 'Back to Operators')}
+            <Button type="button">{operatorSaveLabel}</Button>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap gap-2 rounded-md border border-border bg-card p-2 shadow-sm">
+        <Button
+          type="button"
+          variant={operatorFormTab === 'profile' ? 'default' : 'outline'}
+          onClick={() => setOperatorFormTab('profile')}
+        >
+          Operator Profile
+        </Button>
+        <Button
+          type="button"
+          variant={operatorFormTab === 'technical' ? 'default' : 'outline'}
+          onClick={() => setOperatorFormTab('technical')}
+        >
+          Technical & Assets
+        </Button>
+      </div>
+
+      {operatorFormTab === 'profile' && (
+        <>
+      <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+        <h3 className="text-base font-semibold">Core Identity</h3>
+        <div className="mt-4 grid gap-4 md:grid-cols-3">
+          <div className="grid gap-2"><Label htmlFor="operatorId">Operator ID</Label><Input id="operatorId" defaultValue={selectedOperator.operatorId} /></div>
+          <div className="grid gap-2"><Label htmlFor="operatorName">Operator Name</Label><Input id="operatorName" defaultValue={selectedOperator.operatorName} /></div>
+          <div className="grid gap-2"><Label htmlFor="legalName">Legal Name</Label><Input id="legalName" defaultValue={selectedOperator.legalName} /></div>
+          <div className="grid gap-2"><Label htmlFor="registrationNumber">Registration Number</Label><Input id="registrationNumber" defaultValue={selectedOperator.registrationNumber} /></div>
+          <div className="grid gap-2"><Label htmlFor="taxNumber">Tax / VAT Number</Label><Input id="taxNumber" defaultValue={selectedOperator.taxNumber} /></div>
+          <div className="grid gap-2"><Label htmlFor="status">Status</Label><Input id="status" defaultValue={selectedOperator.status} /></div>
+          <div className="grid gap-2"><Label htmlFor="country">Country</Label><Input id="country" defaultValue={selectedOperator.country} /></div>
+          <div className="grid gap-2"><Label htmlFor="region">Region</Label><Input id="region" defaultValue={selectedOperator.region} /></div>
+          <div className="grid gap-2"><Label htmlFor="city">City</Label><Input id="city" defaultValue={selectedOperator.city} /></div>
+          <div className="grid gap-2"><Label htmlFor="timezone">Timezone</Label><Input id="timezone" defaultValue={selectedOperator.timezone} /></div>
+          <div className="grid gap-2"><Label htmlFor="currency">Currency</Label><Input id="currency" defaultValue={selectedOperator.currency} /></div>
+        </div>
+      </div>
+
+      <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+        <h3 className="text-base font-semibold">Contacts & Escalation</h3>
+        <div className="mt-4 grid gap-4 md:grid-cols-3">
+          <div className="grid gap-2"><Label htmlFor="primaryContact">Primary Contact</Label><Input id="primaryContact" defaultValue={selectedOperator.primaryContact} /></div>
+          <div className="grid gap-2"><Label htmlFor="primaryEmail">Primary Email</Label><Input id="primaryEmail" defaultValue={selectedOperator.primaryEmail} /></div>
+          <div className="grid gap-2"><Label htmlFor="technicalContact">Technical Contact</Label><Input id="technicalContact" defaultValue={selectedOperator.technicalContact} /></div>
+          <div className="grid gap-2"><Label htmlFor="technicalEmail">Technical Email</Label><Input id="technicalEmail" defaultValue={selectedOperator.technicalEmail} /></div>
+          <div className="grid gap-2"><Label htmlFor="billingEmail">Billing Email</Label><Input id="billingEmail" defaultValue={selectedOperator.billingEmail} /></div>
+          <div className="grid gap-2"><Label htmlFor="supportPhone">Support Phone</Label><Input id="supportPhone" defaultValue={selectedOperator.supportPhone} /></div>
+          <div className="grid gap-2"><Label htmlFor="emergencyContact">Emergency Contact</Label><Input id="emergencyContact" defaultValue={selectedOperator.emergencyContact} /></div>
+          <div className="grid gap-2"><Label htmlFor="emergencyPhone">Emergency Phone</Label><Input id="emergencyPhone" defaultValue={selectedOperator.emergencyPhone} /></div>
+          <div className="grid gap-2"><Label htmlFor="escalationLevel">Escalation Level</Label><Input id="escalationLevel" defaultValue={selectedOperator.escalationLevel} /></div>
+        </div>
+      </div>
+
+      <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+        <h3 className="text-base font-semibold">Access Scope</h3>
+        <div className="mt-4 grid gap-4 md:grid-cols-3">
+          <div className="grid gap-2"><Label htmlFor="stationScope">Assigned Stations</Label><Input id="stationScope" defaultValue={selectedOperator.stationScope} /></div>
+          <div className="grid gap-2"><Label htmlFor="chargerScope">Assigned CPIDs</Label><Input id="chargerScope" defaultValue={selectedOperator.chargerScope} /></div>
+          <div className="grid gap-2"><Label htmlFor="allowedUsers">Allowed Users</Label><Input id="allowedUsers" defaultValue={selectedOperator.allowedUsers} /></div>
+          <div className="grid gap-2 md:col-span-3"><Label htmlFor="permissionSet">Permission Set</Label><Textarea id="permissionSet" defaultValue={selectedOperator.permissionSet} /></div>
+        </div>
+      </div>
+
+      <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+        <h3 className="text-base font-semibold">Commercial Policy</h3>
+        <div className="mt-4 grid gap-4 md:grid-cols-3">
+          <div className="grid gap-2"><Label htmlFor="tariffGroup">Tariff Group</Label><Input id="tariffGroup" defaultValue={selectedOperator.tariffGroup} /></div>
+          <div className="grid gap-2"><Label htmlFor="revenueShare">Revenue Share</Label><Input id="revenueShare" defaultValue={selectedOperator.revenueShare} /></div>
+          <div className="grid gap-2"><Label htmlFor="billingCycle">Billing Cycle</Label><Input id="billingCycle" defaultValue={selectedOperator.billingCycle} /></div>
+          <div className="grid gap-2"><Label htmlFor="paymentProvider">Payment Provider</Label><Input id="paymentProvider" defaultValue={selectedOperator.paymentProvider} /></div>
+          <div className="grid gap-2"><Label htmlFor="settlementAccount">Settlement Account</Label><Input id="settlementAccount" defaultValue={selectedOperator.settlementAccount} /></div>
+          <div className="grid gap-2"><Label htmlFor="roamingStatus">Roaming / OCPI</Label><Input id="roamingStatus" defaultValue={selectedOperator.roamingStatus} /></div>
+          <div className="grid gap-2 md:col-span-3"><Label htmlFor="taxSettings">Tax Settings</Label><Textarea id="taxSettings" defaultValue={selectedOperator.taxSettings} /></div>
+        </div>
+      </div>
+
+        </>
+      )}
+      {operatorFormTab === 'technical' && (
+        <>
+      <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+        <h3 className="text-base font-semibold">OCPP & Technical Policy</h3>
+        <div className="mt-4 grid gap-4 md:grid-cols-2">
+          <div className="grid gap-2"><Label htmlFor="ocppPolicy">OCPP Policy</Label><Input id="ocppPolicy" defaultValue={selectedOperator.ocppPolicy} /></div>
+          <div className="grid gap-2"><Label htmlFor="websocketEndpoint">WebSocket Endpoint</Label><Input id="websocketEndpoint" defaultValue={selectedOperator.websocketEndpoint} /></div>
+          <div className="grid gap-2"><Label htmlFor="acceptedCpidPattern">Accepted CPID Pattern</Label><Input id="acceptedCpidPattern" defaultValue={selectedOperator.acceptedCpidPattern} /></div>
+          <div className="grid gap-2"><Label htmlFor="firmwareFamilies">Firmware Families</Label><Input id="firmwareFamilies" defaultValue={selectedOperator.firmwareFamilies} /></div>
+          <div className="grid gap-2"><Label htmlFor="meterValuePolicy">Meter Value Policy</Label><Input id="meterValuePolicy" defaultValue={selectedOperator.meterValuePolicy} /></div>
+          <div className="grid gap-2"><Label htmlFor="firmwarePolicy">Firmware Policy</Label><Input id="firmwarePolicy" defaultValue={selectedOperator.firmwarePolicy} /></div>
+          <div className="grid gap-2 md:col-span-2"><Label htmlFor="diagnosticsPolicy">Diagnostics Policy</Label><Textarea id="diagnosticsPolicy" defaultValue={selectedOperator.diagnosticsPolicy} /></div>
+          <div className="grid gap-2 md:col-span-2"><Label htmlFor="commandPolicy">Command Policy</Label><Textarea id="commandPolicy" defaultValue={selectedOperator.commandPolicy} /></div>
+        </div>
+      </div>
+
+      <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+        <h3 className="text-base font-semibold">Operational Rules</h3>
+        <div className="mt-4 grid gap-4 md:grid-cols-2">
+          <div className="grid gap-2"><Label htmlFor="offlineTimeout">Offline Timeout</Label><Input id="offlineTimeout" defaultValue={selectedOperator.offlineTimeout} /></div>
+          <div className="grid gap-2"><Label htmlFor="maintenanceWindow">Maintenance Window</Label><Input id="maintenanceWindow" defaultValue={selectedOperator.maintenanceWindow} /></div>
+          <div className="grid gap-2"><Label htmlFor="slaLevel">SLA Level</Label><Input id="slaLevel" defaultValue={selectedOperator.slaLevel} /></div>
+          <div className="grid gap-2 md:col-span-2"><Label htmlFor="alertPolicy">Alert Policy</Label><Textarea id="alertPolicy" defaultValue={selectedOperator.alertPolicy} /></div>
+        </div>
+      </div>
+
+      <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+        <h3 className="text-base font-semibold">Compliance & Audit</h3>
+        <div className="mt-4 grid gap-4 md:grid-cols-2">
+          <div className="grid gap-2"><Label htmlFor="agreementVersion">Agreement Version</Label><Input id="agreementVersion" defaultValue={selectedOperator.agreementVersion} /></div>
+          <div className="grid gap-2 md:col-span-2"><Label htmlFor="dataRetentionPolicy">Data Retention Policy</Label><Textarea id="dataRetentionPolicy" defaultValue={selectedOperator.dataRetentionPolicy} /></div>
+        </div>
+      </div>
+        </>
+      )}
+    </div>
+  );
+
+  const definedStations = [
+    {
+      stationId: 'ST-BATX-LHE-001',
+      stationName: 'BattleX',
+      operatorId: 'wafienergy',
+      region: 'North',
+      city: 'Lahore',
+      address: 'Pending',
+      siteOwner: 'BattleX',
+      timezone: 'Asia/Karachi',
+      status: 'Active',
+      tariffGroup: 'Default network tariff',
+      supportContact: 'Operations Lead',
+      supportEmail: 'operator@voltaris.energy',
+      chargerCount: '2',
+      assignedCpids: '13074934, 13074944',
+      gridReference: 'Pending',
+      meterReference: 'Pending',
+      coordinates: 'Pending',
+      notes: 'Station endpoint managed by wafienergy.',
+    },
+  ];
+
+  const blankStation = {
+    stationId: '',
+    stationName: '',
+    operatorId: '',
+    region: '',
+    city: '',
+    address: '',
+    siteOwner: '',
+    timezone: '',
+    status: 'Draft',
+    tariffGroup: '',
+    supportContact: '',
+    supportEmail: '',
+    chargerCount: '',
+    assignedCpids: '',
+    gridReference: '',
+    meterReference: '',
+    coordinates: '',
+    notes: '',
+  };
+  const requestedStationId = searchParams.get('stationId');
+  const selectedStation = isStationCreate
+    ? blankStation
+    : definedStations.find((station) => station.stationId === requestedStationId) ??
+      definedStations[0];
+  const stationFormTitle = isStationCreate ? 'Create Station' : 'Modify Station';
+  const stationSaveLabel = isStationCreate ? 'Create Station' : 'Save Station';
+
+  const stationRegistryPanel = (
+    <div className="flex min-w-0 flex-col gap-4">
+      <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h2 className={heading2Style}>Station Registry</h2>
+            <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+              Stations are operator endpoints. Each station has a station ID, belongs to one operator, and can contain many chargers.
+            </p>
+          </div>
+          <Button
+            type="button"
+            variant="success"
+            className="sm:self-start"
+            onClick={() =>
+              push('/partners?role=super-admin&section=platform-operations&action=create-station')
+            }
+          >
+            <Plus className={buttonIconSize} />
+            Add Station
+          </Button>
+        </div>
+      </div>
+
+      <div className="overflow-hidden rounded-md border border-border bg-background">
+        <DataTable>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Station ID</TableHead>
+              <TableHead>Station</TableHead>
+              <TableHead>Operator</TableHead>
+              <TableHead>Region / City</TableHead>
+              <TableHead>Chargers</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead>Action</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {definedStations.map((station) => (
+              <TableRow key={station.stationId}>
+                <TableCell className="font-medium">{station.stationId}</TableCell>
+                <TableCell>{station.stationName}</TableCell>
+                <TableCell>{station.operatorId}</TableCell>
+                <TableCell>{station.region} / {station.city}</TableCell>
+                <TableCell>{station.chargerCount}</TableCell>
+                <TableCell>{station.status}</TableCell>
+                <TableCell>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() =>
+                      push(
+                        station.stationId === 'BattleX'
+                          ? '/partners?role=super-admin&section=platform-operations&action=modify-station&stationId=BattleX'
+                          : `/${MenuSection.PARTNERS}?role=super-admin&section=platform-operations&action=modify-station&stationId=${station.stationId}`,
+                      )
+                    }
+                  >
+                    Modify
+                  </Button>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </DataTable>
+      </div>
+
+      {definedStations.map((station) => (
+        <div key={`${station.stationId}-detail`} className="grid gap-4 lg:grid-cols-2">
+          <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+            <h3 className="text-base font-semibold">Station Identity</h3>
+            <div className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
+              <div><span className="text-muted-foreground">Station ID</span><p className="font-medium">{station.stationId}</p></div>
+              <div><span className="text-muted-foreground">Station name</span><p className="font-medium">{station.stationName}</p></div>
+              <div><span className="text-muted-foreground">Operator</span><p className="font-medium">{station.operatorId}</p></div>
+              <div><span className="text-muted-foreground">Status</span><p className="font-medium">{station.status}</p></div>
+              <div><span className="text-muted-foreground">Region / city</span><p className="font-medium">{station.region} / {station.city}</p></div>
+              <div><span className="text-muted-foreground">Timezone</span><p className="font-medium">{station.timezone}</p></div>
+              <div><span className="text-muted-foreground">Address</span><p className="font-medium">{station.address}</p></div>
+              <div><span className="text-muted-foreground">Site owner</span><p className="font-medium">{station.siteOwner}</p></div>
+            </div>
+          </div>
+          <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+            <h3 className="text-base font-semibold">Assignments</h3>
+            <div className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
+              <div><span className="text-muted-foreground">Assigned CPIDs</span><p className="font-medium">{station.assignedCpids}</p></div>
+              <div><span className="text-muted-foreground">Charger count</span><p className="font-medium">{station.chargerCount}</p></div>
+              <div><span className="text-muted-foreground">Tariff group</span><p className="font-medium">{station.tariffGroup}</p></div>
+              <div><span className="text-muted-foreground">Support contact</span><p className="font-medium">{station.supportContact}</p></div>
+              <div><span className="text-muted-foreground">Support email</span><p className="font-medium">{station.supportEmail}</p></div>
+              <div><span className="text-muted-foreground">Grid reference</span><p className="font-medium">{station.gridReference}</p></div>
+              <div><span className="text-muted-foreground">Meter reference</span><p className="font-medium">{station.meterReference}</p></div>
+              <div><span className="text-muted-foreground">Coordinates</span><p className="font-medium">{station.coordinates}</p></div>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+
+  const stationFormPanel = (
+    <div
+      key={isStationCreate ? 'create-station' : selectedStation.stationId}
+      className="flex min-w-0 flex-col gap-4"
+    >
+      <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h2 className={heading2Style}>{stationFormTitle}</h2>
+            <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+              Link the station endpoint to an operator. Chargers then attach to this station ID.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {renderBackButton('/partners?role=super-admin&section=platform-operations&action=station-registry', 'Back to Stations')}
+            <Button type="button">{stationSaveLabel}</Button>
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+        <h3 className="text-base font-semibold">Station Identity</h3>
+        <div className="mt-4 grid gap-4 md:grid-cols-3">
+          <div className="grid gap-2"><Label htmlFor="stationId">Station ID</Label><Input id="stationId" defaultValue={selectedStation.stationId} /></div>
+          <div className="grid gap-2"><Label htmlFor="stationName">Station Name</Label><Input id="stationName" defaultValue={selectedStation.stationName} /></div>
+          <div className="grid gap-2"><Label htmlFor="operatorId">Operator</Label><Input id="operatorId" defaultValue={selectedStation.operatorId} /></div>
+          <div className="grid gap-2"><Label htmlFor="status">Status</Label><Input id="status" defaultValue={selectedStation.status} /></div>
+          <div className="grid gap-2"><Label htmlFor="region">Region</Label><Input id="region" defaultValue={selectedStation.region} /></div>
+          <div className="grid gap-2"><Label htmlFor="city">City</Label><Input id="city" defaultValue={selectedStation.city} /></div>
+          <div className="grid gap-2"><Label htmlFor="timezone">Timezone</Label><Input id="timezone" defaultValue={selectedStation.timezone} /></div>
+          <div className="grid gap-2"><Label htmlFor="siteOwner">Site Owner</Label><Input id="siteOwner" defaultValue={selectedStation.siteOwner} /></div>
+          <div className="grid gap-2 md:col-span-3"><Label htmlFor="address">Address</Label><Input id="address" defaultValue={selectedStation.address} /></div>
+        </div>
+      </div>
+
+      <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+        <h3 className="text-base font-semibold">Assignments & Site References</h3>
+        <div className="mt-4 grid gap-4 md:grid-cols-3">
+          <div className="grid gap-2"><Label htmlFor="assignedCpids">Assigned CPIDs</Label><Input id="assignedCpids" defaultValue={selectedStation.assignedCpids} /></div>
+          <div className="grid gap-2"><Label htmlFor="chargerCount">Charger Count</Label><Input id="chargerCount" defaultValue={selectedStation.chargerCount} /></div>
+          <div className="grid gap-2"><Label htmlFor="tariffGroup">Tariff Group</Label><Input id="tariffGroup" defaultValue={selectedStation.tariffGroup} /></div>
+          <div className="grid gap-2"><Label htmlFor="supportContact">Support Contact</Label><Input id="supportContact" defaultValue={selectedStation.supportContact} /></div>
+          <div className="grid gap-2"><Label htmlFor="supportEmail">Support Email</Label><Input id="supportEmail" defaultValue={selectedStation.supportEmail} /></div>
+          <div className="grid gap-2"><Label htmlFor="gridReference">Grid Reference</Label><Input id="gridReference" defaultValue={selectedStation.gridReference} /></div>
+          <div className="grid gap-2"><Label htmlFor="meterReference">Meter Reference</Label><Input id="meterReference" defaultValue={selectedStation.meterReference} /></div>
+          <div className="grid gap-2"><Label htmlFor="coordinates">Coordinates</Label><Input id="coordinates" defaultValue={selectedStation.coordinates} /></div>
+          <div className="grid gap-2 md:col-span-3"><Label htmlFor="notes">Notes</Label><Textarea id="notes" defaultValue={selectedStation.notes} /></div>
+        </div>
+      </div>
+    </div>
+  );
+
+  const definedChargers = [
+    {
+      cpid: '13074934',
+      chargerName: 'ABB Star Charger',
+      manufacturer: 'ABB',
+      model: 'Star Charger',
+      firmwareVersion: 'To be confirmed',
+      ocppVersion: 'OCPP 1.6J',
+      operatorId: 'wafienergy',
+      stationId: 'ST-BATX-LHE-001',
+      stationName: 'BattleX',
+      siteOwner: 'BattleX',
+      equipmentName: 'ABB Star Charger',
+      evseCount: 'To be defined',
+      gridReference: 'Pending',
+      meterReference: 'Pending',
+      coordinates: 'Pending',
+      region: 'North',
+      city: 'Lahore',
+      connectorCount: 'To be confirmed from StatusNotification',
+      connectorTypes: 'To be confirmed',
+      expectedUrl: 'ws://162.243.14.84:9000/ocpp/13074934',
+      status: 'Defined',
+      lastSeen: '2026-07-03T12:40:20.988Z',
+      registrationPolicy: 'Super Admin defined',
+      commandPolicy: 'Remote commands allowed for assigned station',
+      notes: 'Primary BattleX charger record.',
+    },
+    {
+      cpid: '13074944',
+      chargerName: 'ABB Star Charger 2',
+      manufacturer: 'ABB',
+      model: 'Star Charger',
+      firmwareVersion: 'To be confirmed',
+      ocppVersion: 'OCPP 1.6J',
+      operatorId: 'wafienergy',
+      stationId: 'ST-SPL-KHI-001',
+      stationName: 'SPL Bahria - Karachi',
+      siteOwner: 'SPL Bahria',
+      equipmentName: 'ABB Star Charger 2',
+      evseCount: 'To be defined',
+      gridReference: 'Pending',
+      meterReference: 'Pending',
+      coordinates: 'Pending',
+      region: 'Sindh',
+      city: 'Karachi',
+      connectorCount: 'To be confirmed from StatusNotification',
+      connectorTypes: 'To be confirmed',
+      expectedUrl: 'ws://162.243.14.84:9000/ocpp/13074944',
+      status: 'Defined',
+      lastSeen: '',
+      registrationPolicy: 'Super Admin defined',
+      commandPolicy: 'Remote commands allowed for assigned station',
+      notes: 'SPL Bahria - Karachi charger record.',
+    },
+  ];
+
+  const blankCharger = {
+    cpid: '',
+    chargerName: '',
+    manufacturer: '',
+    model: '',
+    firmwareVersion: '',
+    ocppVersion: 'OCPP 1.6J',
+    operatorId: '',
+    stationId: '',
+    stationName: '',
+    siteOwner: '',
+    equipmentName: '',
+    evseCount: '',
+    gridReference: '',
+    meterReference: '',
+    coordinates: '',
+    region: '',
+    city: '',
+    connectorCount: '',
+    connectorTypes: '',
+    expectedUrl: '',
+    status: 'Draft',
+    lastSeen: '',
+    registrationPolicy: 'Super Admin defined',
+    commandPolicy: '',
+    notes: '',
+  };
+  const requestedChargerId = searchParams.get('cpid');
+  const selectedCharger = isChargerCreate
+    ? blankCharger
+    : definedChargers.find((charger) => charger.cpid === requestedChargerId) ??
+      definedChargers[0];
+  const chargerFormTitle = isChargerCreate
+    ? 'Create Charger'
+    : 'Modify Charger';
+  const chargerSaveLabel = isChargerCreate ? 'Create Charger' : 'Save Charger';
+
+  const chargerRegistryPanel = (
+    <div className="flex min-w-0 flex-col gap-4">
+      <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h2 className={heading2Style}>Charger Registry</h2>
+            <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+              Define chargers by CPID, assign them to station and operator, and control whether they are allowed to become active.
+            </p>
+          </div>
+          <Button
+            type="button"
+            variant="success"
+            className="sm:self-start"
+            onClick={() =>
+              push('/partners?role=super-admin&section=platform-operations&action=create-charger')
+            }
+          >
+            <Plus className={buttonIconSize} />
+            Add Charger
+          </Button>
+        </div>
+      </div>
+
+      <div className="overflow-hidden rounded-md border border-border bg-background">
+        <DataTable>
+          <TableHeader>
+            <TableRow>
+              <TableHead>CPID</TableHead>
+              <TableHead>Charger</TableHead>
+              <TableHead>Operator</TableHead>
+              <TableHead>Station</TableHead>
+              <TableHead>Region / City</TableHead>
+              <TableHead>OCPP</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead>Action</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {definedChargers.map((charger) => (
+              <TableRow key={charger.cpid}>
+                <TableCell className="font-medium">{charger.cpid}</TableCell>
+                <TableCell>{charger.chargerName}</TableCell>
+                <TableCell>{charger.operatorId}</TableCell>
+                <TableCell>{charger.stationName}</TableCell>
+                <TableCell>{charger.region} / {charger.city}</TableCell>
+                <TableCell>{charger.ocppVersion}</TableCell>
+                <TableCell>{charger.status}</TableCell>
+                <TableCell>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() =>
+                      push(
+                        charger.cpid === '13074934'
+                          ? '/partners?role=super-admin&section=platform-operations&action=modify-charger&cpid=13074934'
+                          : `/${MenuSection.PARTNERS}?role=super-admin&section=platform-operations&action=modify-charger&cpid=${charger.cpid}`,
+                      )
+                    }
+                  >
+                    Modify
+                  </Button>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </DataTable>
+      </div>
+
+      {definedChargers.map((charger) => (
+        <div key={`${charger.cpid}-detail`} className="grid gap-4 lg:grid-cols-2">
+          <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+            <h3 className="text-base font-semibold">Charger Identity</h3>
+            <div className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
+              <div><span className="text-muted-foreground">CPID</span><p className="font-medium">{charger.cpid}</p></div>
+              <div><span className="text-muted-foreground">Charger name</span><p className="font-medium">{charger.chargerName}</p></div>
+              <div><span className="text-muted-foreground">Manufacturer</span><p className="font-medium">{charger.manufacturer}</p></div>
+              <div><span className="text-muted-foreground">Model</span><p className="font-medium">{charger.model}</p></div>
+              <div><span className="text-muted-foreground">Firmware</span><p className="font-medium">{charger.firmwareVersion}</p></div>
+              <div><span className="text-muted-foreground">OCPP version</span><p className="font-medium">{charger.ocppVersion}</p></div>
+            </div>
+          </div>
+          <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+            <h3 className="text-base font-semibold">Assignment & Policy</h3>
+            <div className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
+              <div><span className="text-muted-foreground">Operator</span><p className="font-medium">{charger.operatorId}</p></div>
+              <div><span className="text-muted-foreground">Station ID</span><p className="font-medium">{charger.stationId}</p></div>
+              <div><span className="text-muted-foreground">Station</span><p className="font-medium">{charger.stationName}</p></div>
+              <div><span className="text-muted-foreground">Region / city</span><p className="font-medium">{charger.region} / {charger.city}</p></div>
+              <div><span className="text-muted-foreground">Expected URL</span><p className="font-medium">{charger.expectedUrl}</p></div>
+              <div><span className="text-muted-foreground">Registration policy</span><p className="font-medium">{charger.registrationPolicy}</p></div>
+              <div><span className="text-muted-foreground">Command policy</span><p className="font-medium">{charger.commandPolicy}</p></div>
+              <div><span className="text-muted-foreground">Last seen</span><p className="font-medium">{charger.lastSeen || 'Never'}</p></div>
+            </div>
+          </div>
+          <div className="rounded-md border border-border bg-card p-5 shadow-sm lg:col-span-2">
+            <h3 className="text-base font-semibold">Station & Asset Mapping</h3>
+            <div className="mt-4 grid gap-3 text-sm sm:grid-cols-3">
+              <div><span className="text-muted-foreground">Station</span><p className="font-medium">{charger.stationName}</p></div>
+              <div><span className="text-muted-foreground">Site owner</span><p className="font-medium">{charger.siteOwner}</p></div>
+              <div><span className="text-muted-foreground">Equipment</span><p className="font-medium">{charger.equipmentName}</p></div>
+              <div><span className="text-muted-foreground">CPID</span><p className="font-medium">{charger.cpid}</p></div>
+              <div><span className="text-muted-foreground">EVSE count</span><p className="font-medium">{charger.evseCount}</p></div>
+              <div><span className="text-muted-foreground">Connector count</span><p className="font-medium">{charger.connectorCount}</p></div>
+              <div><span className="text-muted-foreground">Connector types</span><p className="font-medium">{charger.connectorTypes}</p></div>
+              <div><span className="text-muted-foreground">Grid reference</span><p className="font-medium">{charger.gridReference}</p></div>
+              <div><span className="text-muted-foreground">Meter reference</span><p className="font-medium">{charger.meterReference}</p></div>
+              <div><span className="text-muted-foreground">Coordinates</span><p className="font-medium">{charger.coordinates}</p></div>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+
+  const operatorScopeId = 'wafienergy';
+  const operatorScopedChargers = definedChargers.filter(
+    (charger) => charger.operatorId === operatorScopeId,
+  );
+  const requestedOperatorCpid = searchParams.get('cpid');
+  const selectedOperatorCharger =
+    operatorScopedChargers.find(
+      (charger) => charger.cpid === requestedOperatorCpid,
+    ) ?? operatorScopedChargers[0];
+
+  const chargerFormPanel = (
+    <div
+      key={isChargerCreate ? 'create-charger' : selectedCharger.cpid}
+      className="flex min-w-0 flex-col gap-4"
+    >
+      <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h2 className={heading2Style}>{chargerFormTitle}</h2>
+            <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+              Super Admin defines the charger CPID, station assignment, operator scope, and OCPP registration policy.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {renderBackButton('/partners?role=super-admin&section=platform-operations&action=charger-registry', 'Back to Chargers')}
+            <Button type="button">{chargerSaveLabel}</Button>
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+        <h3 className="text-base font-semibold">Charger Identity</h3>
+        <div className="mt-4 grid gap-4 md:grid-cols-3">
+          <div className="grid gap-2"><Label htmlFor="cpid">CPID</Label><Input id="cpid" defaultValue={selectedCharger.cpid} /></div>
+          <div className="grid gap-2"><Label htmlFor="chargerName">Charger Name</Label><Input id="chargerName" defaultValue={selectedCharger.chargerName} /></div>
+          <div className="grid gap-2"><Label htmlFor="manufacturer">Manufacturer</Label><Input id="manufacturer" defaultValue={selectedCharger.manufacturer} /></div>
+          <div className="grid gap-2"><Label htmlFor="model">Model</Label><Input id="model" defaultValue={selectedCharger.model} /></div>
+          <div className="grid gap-2"><Label htmlFor="firmwareVersion">Firmware Version</Label><Input id="firmwareVersion" defaultValue={selectedCharger.firmwareVersion} /></div>
+          <div className="grid gap-2"><Label htmlFor="ocppVersion">OCPP Version</Label><Input id="ocppVersion" defaultValue={selectedCharger.ocppVersion} /></div>
+        </div>
+      </div>
+
+      <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+        <h3 className="text-base font-semibold">Assignment</h3>
+        <div className="mt-4 grid gap-4 md:grid-cols-3">
+          <div className="grid gap-2"><Label htmlFor="operatorId">Operator</Label><Input id="operatorId" defaultValue={selectedCharger.operatorId} /></div>
+          <div className="grid gap-2"><Label htmlFor="stationId">Station ID</Label><Input id="stationId" defaultValue={selectedCharger.stationId} /></div>
+          <div className="grid gap-2"><Label htmlFor="stationName">Station</Label><Input id="stationName" defaultValue={selectedCharger.stationName} /></div>
+          <div className="grid gap-2"><Label htmlFor="status">Status</Label><Input id="status" defaultValue={selectedCharger.status} /></div>
+          <div className="grid gap-2"><Label htmlFor="region">Region</Label><Input id="region" defaultValue={selectedCharger.region} /></div>
+          <div className="grid gap-2"><Label htmlFor="city">City</Label><Input id="city" defaultValue={selectedCharger.city} /></div>
+          <div className="grid gap-2"><Label htmlFor="lastSeen">Last Seen</Label><Input id="lastSeen" defaultValue={selectedCharger.lastSeen} /></div>
+        </div>
+      </div>
+
+      <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+        <h3 className="text-base font-semibold">Station & Asset Mapping</h3>
+        <div className="mt-4 grid gap-4 md:grid-cols-3">
+          <div className="grid gap-2"><Label htmlFor="siteOwner">Site Owner</Label><Input id="siteOwner" defaultValue={selectedCharger.siteOwner} /></div>
+          <div className="grid gap-2"><Label htmlFor="equipmentName">Equipment</Label><Input id="equipmentName" defaultValue={selectedCharger.equipmentName} /></div>
+          <div className="grid gap-2"><Label htmlFor="evseCount">EVSE Count</Label><Input id="evseCount" defaultValue={selectedCharger.evseCount} /></div>
+          <div className="grid gap-2"><Label htmlFor="connectorCount">Connector Count</Label><Input id="connectorCount" defaultValue={selectedCharger.connectorCount} /></div>
+          <div className="grid gap-2"><Label htmlFor="connectorTypes">Connector Types</Label><Input id="connectorTypes" defaultValue={selectedCharger.connectorTypes} /></div>
+          <div className="grid gap-2"><Label htmlFor="gridReference">Grid Reference</Label><Input id="gridReference" defaultValue={selectedCharger.gridReference} /></div>
+          <div className="grid gap-2"><Label htmlFor="meterReference">Meter Reference</Label><Input id="meterReference" defaultValue={selectedCharger.meterReference} /></div>
+          <div className="grid gap-2"><Label htmlFor="coordinates">Coordinates</Label><Input id="coordinates" defaultValue={selectedCharger.coordinates} /></div>
+        </div>
+      </div>
+
+      <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+        <h3 className="text-base font-semibold">OCPP & Connector Policy</h3>
+        <div className="mt-4 grid gap-4 md:grid-cols-2">
+          <div className="grid gap-2 md:col-span-2"><Label htmlFor="expectedUrl">Expected WebSocket URL</Label><Input id="expectedUrl" defaultValue={selectedCharger.expectedUrl} /></div>
+          <div className="grid gap-2 md:col-span-2"><Label htmlFor="registrationPolicy">Registration Policy</Label><Textarea id="registrationPolicy" defaultValue={selectedCharger.registrationPolicy} /></div>
+          <div className="grid gap-2 md:col-span-2"><Label htmlFor="commandPolicy">Command Policy</Label><Textarea id="commandPolicy" defaultValue={selectedCharger.commandPolicy} /></div>
+          <div className="grid gap-2 md:col-span-2"><Label htmlFor="notes">Notes</Label><Textarea id="notes" defaultValue={selectedCharger.notes} /></div>
+        </div>
+      </div>
+    </div>
+  );
+
+  const firmwarePackages = [
+    {
+      packageId: 'FW-ABB-STAR-2.9.4',
+      manufacturer: 'ABB',
+      model: 'Star Charger',
+      targetVersion: 'v2.9.4',
+      ocppVersion: 'OCPP 1.6J',
+      downloadUrl: 'https://firmware.voltaris.example/abb/star/v2.9.4.bin',
+      checksum: 'Pending vendor checksum',
+      compatibility: 'ABB Star Charger family',
+      status: 'Ready for schedule',
+    },
+  ];
+
+  const firmwareTargets = [
+    {
+      operatorId: 'wafienergy',
+      stationId: 'ST-BATX-LHE-001',
+      stationName: 'BattleX',
+      cpid: '13074934',
+      chargerName: 'ABB Star Charger',
+      manufacturer: 'ABB',
+      model: 'Star Charger',
+      currentFirmware: 'To be confirmed',
+      targetFirmware: 'v2.9.4',
+      connectorCount: 'To be confirmed from StatusNotification',
+      scheduleWindow: 'Sunday 02:00-04:00 Asia/Karachi',
+      command: 'UpdateFirmware',
+      statusFlow: 'FirmwareStatusNotification',
+      pushStatus: 'Not scheduled',
+    },
+    {
+      operatorId: 'wafienergy',
+      stationId: 'ST-BATX-LHE-001',
+      stationName: 'BattleX',
+      cpid: '13074944',
+      chargerName: 'ABB Star Charger 2',
+      manufacturer: 'ABB',
+      model: 'Star Charger',
+      currentFirmware: 'To be confirmed',
+      targetFirmware: 'v2.9.4',
+      connectorCount: 'To be confirmed from StatusNotification',
+      scheduleWindow: 'Sunday 02:00-04:00 Asia/Karachi',
+      command: 'UpdateFirmware',
+      statusFlow: 'FirmwareStatusNotification',
+      pushStatus: 'Not scheduled',
+    },
+  ];
+
+  const firmwareManagementPanel = (
+    <div className="flex min-w-0 flex-col gap-4">
+      <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h2 className={heading2Style}>Firmware Management</h2>
+            <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+              Super Admin schedules firmware by operator, station, charger CPID, manufacturer, model, and target version.
+            </p>
+          </div>
+          <Button type="button" variant="success" className="sm:self-start">
+            <Plus className={buttonIconSize} />
+            Schedule Firmware
+          </Button>
+        </div>
+      </div>
+
+      <div className="overflow-hidden rounded-md border border-border bg-background">
+        <DataTable>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Operator</TableHead>
+              <TableHead>Station ID</TableHead>
+              <TableHead>Station</TableHead>
+              <TableHead>CPID</TableHead>
+              <TableHead>Charger</TableHead>
+              <TableHead>Current</TableHead>
+              <TableHead>Target</TableHead>
+              <TableHead>Status</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {firmwareTargets.map((target) => (
+              <TableRow key={`${target.stationId}-${target.cpid}`}>
+                <TableCell>{target.operatorId}</TableCell>
+                <TableCell className="font-medium">{target.stationId}</TableCell>
+                <TableCell>{target.stationName}</TableCell>
+                <TableCell>{target.cpid}</TableCell>
+                <TableCell>{target.chargerName}</TableCell>
+                <TableCell>{target.currentFirmware}</TableCell>
+                <TableCell>{target.targetFirmware}</TableCell>
+                <TableCell>{target.pushStatus}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </DataTable>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+          <h3 className="text-base font-semibold">Firmware Package Registry</h3>
+          <div className="mt-4 grid gap-3 text-sm">
+            {firmwarePackages.map((pkg) => (
+              <div key={pkg.packageId} className="rounded-md border border-border p-4">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div><span className="text-muted-foreground">Package ID</span><p className="font-medium">{pkg.packageId}</p></div>
+                  <div><span className="text-muted-foreground">Target version</span><p className="font-medium">{pkg.targetVersion}</p></div>
+                  <div><span className="text-muted-foreground">Manufacturer / model</span><p className="font-medium">{pkg.manufacturer} / {pkg.model}</p></div>
+                  <div><span className="text-muted-foreground">OCPP version</span><p className="font-medium">{pkg.ocppVersion}</p></div>
+                  <div><span className="text-muted-foreground">Compatibility</span><p className="font-medium">{pkg.compatibility}</p></div>
+                  <div><span className="text-muted-foreground">Status</span><p className="font-medium">{pkg.status}</p></div>
+                  <div className="sm:col-span-2"><span className="text-muted-foreground">Download URL</span><p className="break-all font-medium">{pkg.downloadUrl}</p></div>
+                  <div className="sm:col-span-2"><span className="text-muted-foreground">Checksum</span><p className="font-medium">{pkg.checksum}</p></div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+          <h3 className="text-base font-semibold">Push Controls</h3>
+          <div className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
+            {firmwareTargets.map((target) => (
+              <div key={`${target.cpid}-controls`} className="contents">
+                <div><span className="text-muted-foreground">Command</span><p className="font-medium">{target.command}</p></div>
+                <div><span className="text-muted-foreground">Progress callback</span><p className="font-medium">{target.statusFlow}</p></div>
+                <div><span className="text-muted-foreground">Schedule window</span><p className="font-medium">{target.scheduleWindow}</p></div>
+                <div><span className="text-muted-foreground">Connector count</span><p className="font-medium">{target.connectorCount}</p></div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  const auditLogs = [
+    {
+      date: '2026-06-30',
+      time: '15:42',
+      user: 'Admin User',
+      activity: 'Changed tariff rate',
+      resource: 'Network pricing policy',
+      result: 'Completed',
+    },
+    {
+      date: '2026-06-30',
+      time: '14:18',
+      user: 'System Super User',
+      activity: 'Reviewed operator access',
+      resource: 'Operator permissions',
+      result: 'Completed',
+    },
+    {
+      date: '2026-06-29',
+      time: '18:05',
+      user: 'Admin User',
+      activity: 'Generated diagnostic report',
+      resource: 'Charging station logs',
+      result: 'Completed',
+    },
+    {
+      date: '2026-06-28',
+      time: '10:27',
+      user: 'System Super User',
+      activity: 'Emergency access opened',
+      resource: 'Incident response',
+      result: 'Time-boxed',
+    },
+  ];
+
+  const diagnosticLogFallback = [
+    {
+      timestamp: '2026-07-06 17:48:22',
+      source: 'OCPP',
+      eventType: 'Incoming',
+      actor: 'Charger 13074934',
+      station: 'BattleX',
+      cpid: '13074934',
+      messageId: 'hb-13074934-001',
+      action: 'Heartbeat',
+      detail: 'Heartbeat received from charger websocket session.',
+      severity: 'Info',
+      direction: 'External inbound',
+      auditResult: 'Recorded',
+      raw: '[2,"hb-13074934-001","Heartbeat",{}]',
+    },
+  ];
+  const displayedDiagnosticLogs = diagnosticLogs.length
+    ? diagnosticLogs
+    : diagnosticLogFallback;
+
+  const logSources = ['All', ...Array.from(new Set(displayedDiagnosticLogs.map((log) => log.source)))];
+  const logEventTypes = ['All', ...Array.from(new Set(displayedDiagnosticLogs.map((log) => log.eventType)))];
+  const logSeverities = ['All', ...Array.from(new Set(displayedDiagnosticLogs.map((log) => log.severity)))];
+  const filteredDiagnosticLogs = displayedDiagnosticLogs.filter((log) => {
+    const searchable = Object.values(log).join(' ').toLowerCase();
+    return (
+      (logSourceFilter === 'All' || log.source === logSourceFilter) &&
+      (logEventFilter === 'All' || log.eventType === logEventFilter) &&
+      (logSeverityFilter === 'All' || log.severity === logSeverityFilter) &&
+      (!logSearch.trim() || searchable.includes(logSearch.toLowerCase()))
+    );
+  });
+  const logSummary = [
+    { label: 'Total Events', value: displayedDiagnosticLogs.length.toString(), detail: 'OpenObserve records' },
+    { label: 'Exceptions', value: displayedDiagnosticLogs.filter((log) => log.eventType === 'Exception').length.toString(), detail: 'Captured errors' },
+    { label: 'External OCPP', value: displayedDiagnosticLogs.filter((log) => log.source === 'OCPP').length.toString(), detail: 'Inbound and outbound' },
+    { label: 'Transactions', value: displayedDiagnosticLogs.filter((log) => log.source === 'Transaction').length.toString(), detail: 'Session lifecycle' },
+  ];
+
+  const emergencyAccessEvents = [
+    {
+      opened: '2026-06-28 10:27',
+      requester: 'System Super User',
+      grantedTo: 'Amran',
+      reason: 'Lock down compromised operator account',
+      expires: '2026-06-28 11:27',
+      status: 'Expired',
+    },
+    {
+      opened: '2026-06-15 02:14',
+      requester: 'Admin User',
+      grantedTo: 'Station Response Lead',
+      reason: 'Critical station override during outage response',
+      expires: '2026-06-15 03:14',
+      status: 'Logged',
+    },
+  ];
+
+  const emergencyEligiblePeople = [
+    {
+      name: 'Amran',
+      seniorRole: 'System Super User',
+      scope: 'Platform-wide incident response',
+      approvalBasis: 'Named break-glass authority',
+      status: 'Eligible',
+    },
+    {
+      name: 'Admin User',
+      seniorRole: 'Security Administrator',
+      scope: 'User lockout and account compromise',
+      approvalBasis: 'Security response owner',
+      status: 'Eligible',
+    },
+    {
+      name: 'Station Response Lead',
+      seniorRole: 'Network Operations Lead',
+      scope: 'Critical station fault override',
+      approvalBasis: 'Operational escalation owner',
+      status: 'Eligible',
+    },
+  ];
+
+  const accessControlActions = [
+    ActionType.LIST,
+    ActionType.SHOW,
+    ActionType.CREATE,
+    ActionType.EDIT,
+    ActionType.DELETE,
+    ActionType.ACCESS,
+    ActionType.COMMAND,
+  ];
+
+  const rolePermissionRows = ACCESS_CONTROL_ROLE_OPTIONS.map((role) => ({
+    role,
+    permissions: ROLE_PERMISSIONS[role as keyof typeof ROLE_PERMISSIONS],
+  }));
+
+  const operatorMetrics = [
+    {
+      label: 'Assigned Stations',
+      value: '2',
+      detail: 'BattleX and SPL Bahria',
+    },
+    {
+      label: 'Available Chargers',
+      value: '0 / 2',
+      detail: 'awaiting reconnect',
+    },
+    {
+      label: 'Energy Today',
+      value: '0.25 kWh',
+      detail: 'test transaction only',
+    },
+    {
+      label: 'Fault Tickets',
+      value: '1',
+      detail: 'brief connection',
+    },
+  ];
+
+  const operatorStationHealth = [
+    {
+      station: 'BattleX Lab',
+      location: 'Operator-owned station',
+      status: 'Attention',
+      connectors: '0 / 1',
+      alert: 'Brief connection only',
+    },
+    {
+      station: 'SPL Bahria - Karachi',
+      location: 'Operator-owned station',
+      status: 'Offline',
+      connectors: '0 / 1',
+      alert: 'No recent heartbeat',
+    },
+  ];
+
+  const operatorWorkflows = [
+    'Review station incidents',
+    'Export daily transactions',
+    'Assign field maintenance',
+    'Invite team member',
+  ];
+
+  const operatorTimeseries = [
+    { time: '00:00', energy: 0, revenue: 0, sessions: 0, failures: 0, reconnects: 0 },
+    { time: '04:00', energy: 0, revenue: 0, sessions: 0, failures: 0, reconnects: 0 },
+    { time: '08:00', energy: 0.25, revenue: 0, sessions: 1, failures: 0, reconnects: 1 },
+    { time: '12:00', energy: 0, revenue: 0, sessions: 0, failures: 1, reconnects: 0 },
+    { time: '16:00', energy: 0, revenue: 0, sessions: 0, failures: 0, reconnects: 0 },
+    { time: '20:00', energy: 0, revenue: 0, sessions: 0, failures: 0, reconnects: 0 },
+  ];
+
+  const operatorUtilization = [
+    { location: 'BattleX Lab', utilization: 42 },
+    { location: 'SPL Bahria', utilization: 18 },
+    { location: 'Charger 13074934', utilization: 56 },
+    { location: 'Charger 13074944', utilization: 24 },
+    { location: 'Production readiness', utilization: 38 },
+  ];
+
+  const operatorAlerts = [
+    {
+      time: '06:25 UTC',
+      source: '13074934',
+      signal: 'Disconnected after short session',
+      severity: 'Warning',
+    },
+    {
+      time: '08:24 UTC',
+      source: '13074944',
+      signal: 'SPL Bahria charger disconnected',
+      severity: 'Warning',
+    },
+    {
+      time: '09:29 UTC',
+      source: 'TEST-RFID',
+      signal: 'Completed test transaction',
+      severity: 'Review',
+    },
+  ];
+
+  const operatorFailureEvents = [
+    {
+      time: '06:25 UTC',
+      station: 'BattleX Lab',
+      type: 'Reconnect',
+      detail: 'Charger 13074934 connected briefly then disconnected',
+      status: 'Needs field validation',
+    },
+    {
+      time: '08:24 UTC',
+      station: 'SPL Bahria - Karachi',
+      type: 'Reconnect',
+      detail: 'Charger 13074944 connected then closed before stable heartbeat',
+      status: 'Needs field validation',
+    },
+    {
+      time: '09:29 UTC',
+      station: 'BattleX Lab',
+      type: 'Transaction Failure',
+      detail: 'Only TEST-RFID transaction exists; no customer session yet',
+      status: 'Commercial setup pending',
+    },
+  ];
+
+  const timeseriesChartConfig = {
+    energy: {
+      label: 'Energy',
+      color: '#22c55e',
+    },
+    revenue: {
+      label: 'Revenue',
+      color: '#f59e0b',
+    },
+    sessions: {
+      label: 'Sessions',
+      color: '#26002e',
+    },
+    failures: {
+      label: 'Failures',
+      color: '#ef4444',
+    },
+    reconnects: {
+      label: 'Reconnects',
+      color: '#3b82f6',
+    },
+  } satisfies ChartConfig;
+
+  const utilizationChartConfig = {
+    utilization: {
+      label: 'Utilization',
+      color: '#26002e',
+    },
+  } satisfies ChartConfig;
+
+  const stationMetrics = [
+    {
+      label: 'Charger Status',
+      value: 'Offline',
+      detail: 'Last seen Jul 7 08:24 UTC',
+    },
+    {
+      label: 'Charger Connectors',
+      value: '2',
+      detail: 'both unavailable',
+    },
+    {
+      label: 'Today kWh',
+      value: '0.00',
+      detail: 'no customer sessions',
+    },
+    {
+      label: 'Commands',
+      value: 'Ready',
+      detail: 'execute on reconnect',
+    },
+  ];
+
+  const stationLoadSeries = [
+    { time: '10:00', power: 0, temperature: 0, sessions: 0 },
+    { time: '11:00', power: 0, temperature: 0, sessions: 0 },
+    { time: '12:00', power: 0, temperature: 0, sessions: 0 },
+    { time: '13:00', power: 0, temperature: 0, sessions: 0 },
+    { time: '14:00', power: 0, temperature: 0, sessions: 0 },
+    { time: '15:00', power: 0, temperature: 0, sessions: 0 },
+  ];
+
+  const stationConnectors = [
+    {
+      connector: 'C1',
+      type: 'Charger 13074934',
+      status: 'Unavailable',
+      power: '0 kW',
+      detail: 'No vehicle',
+    },
+    {
+      connector: 'C2',
+      type: 'Charger 13074934',
+      status: 'Unavailable',
+      power: '0 kW',
+      detail: 'No vehicle',
+    },
+  ];
+
+  const stationSessions = [
+    {
+      time: 'Jul 7 08:24',
+      user: 'Charger 13074934',
+      connector: 'WebSocket',
+      energy: '0.0 kWh',
+      status: 'Disconnected before heartbeat',
+    },
+  ];
+
+  const stationDiagnostics = [
+    ['Heartbeat', 'Missing', 'No stable heartbeat observed'],
+    ['OCPP Latency', 'Unknown', 'Charger is offline'],
+    ['Meter Sample', 'Missing', 'No live production telemetry'],
+    ['Firmware', 'View only', 'Operator or Super Admin approves updates'],
+    ['Config Access', 'View only', 'Operator escalation required'],
+  ];
+
+  const stationLoadChartConfig = {
+    power: {
+      label: 'Power',
+      color: '#22c55e',
+    },
+    temperature: {
+      label: 'Temperature',
+      color: '#f59e0b',
+    },
+    sessions: {
+      label: 'Sessions',
+      color: '#3b82f6',
+    },
+  } satisfies ChartConfig;
+
+  const updateTariffForm =
+    (field: keyof typeof tariffForm) =>
+    (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      setTariffForm((currentForm) => ({
+        ...currentForm,
+        [field]: event.target.value,
+      }));
+    };
+
+  const updateEmergencyAccessForm =
+    (field: keyof typeof emergencyAccessForm) =>
+    (
+      event: ChangeEvent<
+        HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement
+      >,
+    ) => {
+      setEmergencyAccessForm((currentForm) => ({
+        ...currentForm,
+        [field]: event.target.value,
+      }));
+    };
+
+  const updateCreateUserForm =
+    (field: keyof typeof createUserForm) =>
+    (
+      event: ChangeEvent<
+        HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement
+      >,
+    ) => {
+      setCreateUserForm((currentForm) => ({
+        ...currentForm,
+        [field]: event.target.value,
+      }));
+    };
+
+  const submitCreateUser = async () => {
+    setCreateUserLoading(true);
+    setKeycloakUsersError('');
+
+    try {
+      const response = await fetch('/api/admin/keycloak-users', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(createUserForm),
+      });
+      const payload = await response.json();
+
+      if (!response.ok) {
+        throw new Error(payload.error || `User creation failed with ${response.status}`);
+      }
+
+      toast.success('User created in Keycloak');
+      setCreateUserForm({
+        name: '',
+        email: '',
+        userRole: '',
+        temporaryPassword: '',
+        scope: '',
+        note: '',
+      });
+      setShowCreateUserForm(false);
+      await refreshKeycloakUsers();
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Unable to create user';
+      setKeycloakUsersError(message);
+      toast.error(message);
+    } finally {
+      setCreateUserLoading(false);
+    }
+  };
+
+  const tariffHistoryList = (
+    <div className="border-t border-white/10 bg-[#f8f7f4] p-5 text-foreground">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className={heading2Style}>Tariff History</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Review all recorded tariff changes and pricing audit notes.
+          </p>
+        </div>
+        <Button
+          type="button"
+          className="sm:self-start"
+          onClick={() => setShowTariffForm(true)}
+        >
+          Change Tariff
+        </Button>
+      </div>
+
+      <div className="mt-5 overflow-hidden rounded-md border border-border bg-background">
+        <DataTable>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Date of Change</TableHead>
+              <TableHead>Time</TableHead>
+              <TableHead>Current Rate</TableHead>
+              <TableHead>Change Details</TableHead>
+              <TableHead>Note</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {tariffHistory.map((change) => (
+              <TableRow key={`${change.date}-${change.time}`}>
+                <TableCell>{change.date}</TableCell>
+                <TableCell>{change.time}</TableCell>
+                <TableCell>{change.rate}</TableCell>
+                <TableCell>{change.details}</TableCell>
+                <TableCell className="whitespace-normal text-muted-foreground">
+                  {change.note}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </DataTable>
+      </div>
+    </div>
+  );
+
+  const tariffChangeForm = (
+    <div className="border-t border-white/10 bg-[#f8f7f4] p-5 text-foreground">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className={heading2Style}>Change Tariff</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Set the pricing change record for review and audit.
+          </p>
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          className="sm:self-start"
+          onClick={() => setShowTariffForm(false)}
+        >
+          Back to History
+        </Button>
+      </div>
+
+      <form className="mt-5 grid gap-4 md:grid-cols-2">
+        <div className="space-y-2">
+          <Label htmlFor="tariff-change-date">Date of Change</Label>
+          <Input
+            id="tariff-change-date"
+            type="date"
+            value={tariffForm.changeDate}
+            onChange={updateTariffForm('changeDate')}
+          />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="tariff-change-time">Time of Change</Label>
+          <Input
+            id="tariff-change-time"
+            type="time"
+            value={tariffForm.changeTime}
+            onChange={updateTariffForm('changeTime')}
+          />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="tariff-current-rate">Current Rate</Label>
+          <Input
+            id="tariff-current-rate"
+            type="number"
+            min="0"
+            step="0.01"
+            placeholder="0.00"
+            value={tariffForm.currentRate}
+            onChange={updateTariffForm('currentRate')}
+          />
+        </div>
+        <div className="space-y-2 md:col-span-2">
+          <Label htmlFor="tariff-change-details">Change Details</Label>
+          <Textarea
+            id="tariff-change-details"
+            className="min-h-28"
+            placeholder="Describe the tariff change and scope."
+            value={tariffForm.changeDetails}
+            onChange={updateTariffForm('changeDetails')}
+          />
+        </div>
+        <div className="space-y-2 md:col-span-2">
+          <Label htmlFor="tariff-change-note">
+            Note: Why This Change Was Made
+          </Label>
+          <Textarea
+            id="tariff-change-note"
+            className="min-h-24"
+            placeholder="Add the business reason, approval context, or operational trigger for this change."
+            value={tariffForm.changeNote}
+            onChange={updateTariffForm('changeNote')}
+          />
+        </div>
+        <div className="flex justify-end gap-2 md:col-span-2">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => setShowTariffForm(false)}
+          >
+            Cancel
+          </Button>
+          <Button type="button">Save Change</Button>
+        </div>
+      </form>
+    </div>
+  );
+
+  const auditActivityList = (
+    <div className="flex min-w-0 flex-col gap-4 rounded-md border border-border bg-card p-5 shadow-sm">
+      <div>
+        <h2 className={heading2Style}>Audit Activity</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Permanent append-only evidence of who did what, when, across the
+          platform. This settles pricing, role, approval, and access disputes.
+        </p>
+      </div>
+
+      <div className="overflow-hidden rounded-md border border-border bg-background">
+        <DataTable>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Date</TableHead>
+              <TableHead>Time</TableHead>
+              <TableHead>User</TableHead>
+              <TableHead>Activity</TableHead>
+              <TableHead>Resource</TableHead>
+              <TableHead>Result</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {auditLogs.map((log) => (
+              <TableRow key={`${log.date}-${log.time}-${log.activity}`}>
+                <TableCell>{log.date}</TableCell>
+                <TableCell>{log.time}</TableCell>
+                <TableCell>{log.user}</TableCell>
+                <TableCell>{log.activity}</TableCell>
+                <TableCell>{log.resource}</TableCell>
+                <TableCell>{log.result}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </DataTable>
+      </div>
+    </div>
+  );
+
+  const diagnosticsLogsList = (
+    <div className="flex min-w-0 flex-col gap-4">
+      <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h2 className={heading2Style}>Unified Audit Log Console</h2>
+            <p className="mt-1 max-w-4xl text-sm text-muted-foreground">
+              Voltaris diagnostics powered by OpenObserve. Logs stay inside this dashboard while OpenObserve provides search and storage behind the scenes.
+            </p>
+            {diagnosticLogsError && (
+              <p className="mt-2 text-sm text-red-600">{diagnosticLogsError}</p>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-2 sm:self-start">
+            <Button
+              type="button"
+              variant="success"
+              onClick={() => void refreshDiagnosticLogs()}
+              disabled={diagnosticLogsLoading}
+            >
+              {diagnosticLogsLoading ? 'Loading Logs' : 'Refresh Logs'}
+            </Button>
+            <Button type="button" variant="outline">
+              Export JSONL
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        {logSummary.map((metric) => (
+          <div key={metric.label} className="rounded-md border border-border bg-card p-5 shadow-sm">
+            <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">{metric.label}</p>
+            <p className="mt-2 text-3xl font-semibold text-foreground">{metric.value}</p>
+            <p className="mt-1 text-sm text-muted-foreground">{metric.detail}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+        <h3 className="text-base font-semibold">Filters</h3>
+        <div className="mt-4 grid gap-3 md:grid-cols-4">
+          <div className="grid gap-2">
+            <Label htmlFor="log-search">Search</Label>
+            <Input
+              id="log-search"
+              placeholder="CPID, message ID, action, detail"
+              value={logSearch}
+              onChange={(event) => setLogSearch(event.target.value)}
+            />
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="log-source">Source</Label>
+            <select
+              id="log-source"
+              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              value={logSourceFilter}
+              onChange={(event) => setLogSourceFilter(event.target.value)}
+            >
+              {logSources.map((source) => (
+                <option key={source} value={source}>{source}</option>
+              ))}
+            </select>
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="log-event-type">Event Type</Label>
+            <select
+              id="log-event-type"
+              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              value={logEventFilter}
+              onChange={(event) => setLogEventFilter(event.target.value)}
+            >
+              {logEventTypes.map((eventType) => (
+                <option key={eventType} value={eventType}>{eventType}</option>
+              ))}
+            </select>
+          </div>
+          <div className="grid gap-2">
+            <Label htmlFor="log-severity">Severity</Label>
+            <select
+              id="log-severity"
+              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              value={logSeverityFilter}
+              onChange={(event) => setLogSeverityFilter(event.target.value)}
+            >
+              {logSeverities.map((severity) => (
+                <option key={severity} value={severity}>{severity}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div className="overflow-hidden rounded-md border border-border bg-background">
+        <DataTable>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Timestamp</TableHead>
+              <TableHead>Source</TableHead>
+              <TableHead>Type</TableHead>
+              <TableHead>Direction</TableHead>
+              <TableHead>Actor</TableHead>
+              <TableHead>CPID</TableHead>
+              <TableHead>Action</TableHead>
+              <TableHead>Detail</TableHead>
+              <TableHead>Severity</TableHead>
+              <TableHead>Audit</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {filteredDiagnosticLogs.map((log) => (
+              <TableRow key={`${log.timestamp}-${log.messageId}-${log.action}`}>
+                <TableCell>{log.timestamp}</TableCell>
+                <TableCell>{log.source}</TableCell>
+                <TableCell>{log.eventType}</TableCell>
+                <TableCell>{log.direction}</TableCell>
+                <TableCell>{log.actor}</TableCell>
+                <TableCell>{log.cpid}</TableCell>
+                <TableCell>{log.action}</TableCell>
+                <TableCell className="max-w-lg whitespace-normal">
+                  <div>{log.detail}</div>
+                  <div className="mt-1 text-xs text-muted-foreground">Message: {log.messageId}</div>
+                  <div className="mt-1 break-all font-mono text-xs text-muted-foreground">{log.raw}</div>
+                </TableCell>
+                <TableCell>
+                  <span
+                    className={`rounded-md px-2 py-1 text-xs font-medium ${
+                      log.severity === 'Error'
+                        ? 'bg-red-100 text-red-700'
+                        : log.severity === 'Review'
+                          ? 'bg-amber-100 text-amber-700'
+                          : 'bg-green-100 text-green-700'
+                    }`}
+                  >
+                    {log.severity}
+                  </span>
+                </TableCell>
+                <TableCell>{log.auditResult}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </DataTable>
+      </div>
+    </div>
+  );
+
+  const emergencyAccessList = (
+    <div className="flex min-w-0 flex-col gap-4 rounded-md border border-border bg-card p-5 shadow-sm">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className={heading2Style}>Emergency Access</h2>
+        </div>
+        <Button
+          type="button"
+          className="sm:self-start"
+          onClick={() => setShowEmergencyAccessForm(true)}
+        >
+          Grant Emergency Access
+        </Button>
+      </div>
+
+      {showEmergencyAccessForm && (
+        <form className="grid gap-4 rounded-md border border-border bg-background p-4 md:grid-cols-2">
+          <div className="space-y-2">
+            <Label htmlFor="emergency-access-person">Eligible User</Label>
+            <select
+              id="emergency-access-person"
+              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              value={emergencyAccessForm.grantedTo}
+              onChange={updateEmergencyAccessForm('grantedTo')}
+            >
+              <option value="">Select eligible user</option>
+              {emergencyEligiblePeople.map((person) => (
+                <option key={person.name} value={person.name}>
+                  {person.name} - {person.seniorRole}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="emergency-access-start">Start Time</Label>
+            <Input
+              id="emergency-access-start"
+              type="datetime-local"
+              value={emergencyAccessForm.startTime}
+              onChange={updateEmergencyAccessForm('startTime')}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="emergency-access-end">End Time</Label>
+            <Input
+              id="emergency-access-end"
+              type="datetime-local"
+              value={emergencyAccessForm.endTime}
+              onChange={updateEmergencyAccessForm('endTime')}
+            />
+          </div>
+          <div className="space-y-2 md:col-span-2">
+            <Label htmlFor="emergency-access-note">
+              Note: Why Access Was Granted
+            </Label>
+            <Textarea
+              id="emergency-access-note"
+              className="min-h-24"
+              placeholder="Describe the incident, why normal permissions are not enough, and who approved this emergency access."
+              value={emergencyAccessForm.note}
+              onChange={updateEmergencyAccessForm('note')}
+            />
+          </div>
+          <div className="flex justify-end gap-2 md:col-span-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setShowEmergencyAccessForm(false)}
+            >
+              Cancel
+            </Button>
+            <Button type="button">Grant Access</Button>
+          </div>
+        </form>
+      )}
+
+      <div className="overflow-hidden rounded-md border border-border bg-background">
+        <DataTable>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Eligible Senior Person</TableHead>
+              <TableHead>Senior Role</TableHead>
+              <TableHead>Emergency Scope</TableHead>
+              <TableHead>Approval Basis</TableHead>
+              <TableHead>Status</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {emergencyEligiblePeople.map((person) => (
+              <TableRow key={person.name}>
+                <TableCell>{person.name}</TableCell>
+                <TableCell>{person.seniorRole}</TableCell>
+                <TableCell className="whitespace-normal">
+                  {person.scope}
+                </TableCell>
+                <TableCell className="whitespace-normal">
+                  {person.approvalBasis}
+                </TableCell>
+                <TableCell>{person.status}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </DataTable>
+      </div>
+
+      <div className="overflow-hidden rounded-md border border-border bg-background">
+        <DataTable>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Opened</TableHead>
+              <TableHead>Requester</TableHead>
+              <TableHead>Granted To</TableHead>
+              <TableHead>Reason</TableHead>
+              <TableHead>Expires</TableHead>
+              <TableHead>Status</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {emergencyAccessEvents.map((event) => (
+              <TableRow key={`${event.opened}-${event.requester}`}>
+                <TableCell>{event.opened}</TableCell>
+                <TableCell>{event.requester}</TableCell>
+                <TableCell>{event.grantedTo}</TableCell>
+                <TableCell className="whitespace-normal">
+                  {event.reason}
+                </TableCell>
+                <TableCell>{event.expires}</TableCell>
+                <TableCell>{event.status}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </DataTable>
+      </div>
+    </div>
+  );
+
+  const userRolesList = (
+    <div className="flex min-w-0 flex-col gap-4 rounded-md border border-border bg-card p-5 shadow-sm">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className={heading2Style}>View Users</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Manage Keycloak users and client roles for Voltaris access.
+          </p>
+          {keycloakUsersError && (
+            <p className="mt-2 text-sm text-red-600">{keycloakUsersError}</p>
+          )}
+        </div>
+        <div className="flex flex-wrap gap-2 sm:self-start">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => void refreshKeycloakUsers()}
+            disabled={keycloakUsersLoading}
+          >
+            {keycloakUsersLoading ? 'Loading Users' : 'Refresh Users'}
+          </Button>
+          <Button
+            type="button"
+            onClick={() => setShowCreateUserForm(true)}
+          >
+            <Plus className={buttonIconSize} />
+            Create User
+          </Button>
+        </div>
+      </div>
+
+      {showCreateUserForm && (
+        <form
+          className="grid gap-4 rounded-md border border-border bg-background p-4 md:grid-cols-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void submitCreateUser();
+          }}
+        >
+          <div className="space-y-2">
+            <Label htmlFor="create-user-name">Name</Label>
+            <Input
+              id="create-user-name"
+              placeholder="Full name"
+              value={createUserForm.name}
+              onChange={updateCreateUserForm('name')}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="create-user-email">Email</Label>
+            <Input
+              id="create-user-email"
+              type="email"
+              placeholder="user@voltaris.energy"
+              value={createUserForm.email}
+              onChange={updateCreateUserForm('email')}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="create-user-role">User Role</Label>
+            <select
+              id="create-user-role"
+              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              value={createUserForm.userRole}
+              onChange={updateCreateUserForm('userRole')}
+            >
+              <option value="">Select user role</option>
+              {ACCESS_CONTROL_ROLE_OPTIONS.map((role) => (
+                <option key={role} value={role}>
+                  {role}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="create-user-password">Temporary Password</Label>
+            <Input
+              id="create-user-password"
+              type="password"
+              placeholder="Set initial password"
+              value={createUserForm.temporaryPassword}
+              onChange={updateCreateUserForm('temporaryPassword')}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="create-user-scope">Scope</Label>
+            <select
+              id="create-user-scope"
+              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              value={createUserForm.scope}
+              onChange={updateCreateUserForm('scope')}
+            >
+              <option value="">Select access scope</option>
+              {ACCESS_CONTROL_SCOPES.map((scope) => (
+                <option key={scope} value={scope}>
+                  {scope}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="space-y-2 md:col-span-2">
+            <Label htmlFor="create-user-note">Access Note</Label>
+            <Textarea
+              id="create-user-note"
+              className="min-h-24"
+              placeholder="Add approval context, assigned operator or station, and any restrictions."
+              value={createUserForm.note}
+              onChange={updateCreateUserForm('note')}
+            />
+          </div>
+          <div className="flex justify-end gap-2 md:col-span-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setShowCreateUserForm(false)}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" disabled={createUserLoading}>
+              {createUserLoading ? 'Saving User' : 'Save User'}
+            </Button>
+          </div>
+        </form>
+      )}
+
+      <div className="overflow-hidden rounded-md border border-border bg-background">
+        <DataTable>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Name</TableHead>
+              <TableHead>Email</TableHead>
+              <TableHead>Username</TableHead>
+              <TableHead>Roles</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead>Last Login</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {keycloakUsersLoading && (
+              <TableRow>
+                <TableCell colSpan={6}>Loading Keycloak users...</TableCell>
+              </TableRow>
+            )}
+            {!keycloakUsersLoading && keycloakUsers.length === 0 && (
+              <TableRow>
+                <TableCell colSpan={6}>No Keycloak users found.</TableCell>
+              </TableRow>
+            )}
+            {!keycloakUsersLoading && keycloakUsers.map((user) => (
+              <TableRow key={user.id}>
+                <TableCell>{user.name}</TableCell>
+                <TableCell>{user.email}</TableCell>
+                <TableCell>{user.username}</TableCell>
+                <TableCell>{user.roles.join(', ') || 'No app role'}</TableCell>
+                <TableCell>{user.status}</TableCell>
+                <TableCell>{user.lastLogin}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </DataTable>
+      </div>
+    </div>
+  );
+
+  const rightsRolesList = (
+    <div className="flex min-w-0 flex-col gap-4 rounded-md border border-border bg-card p-5 shadow-sm">
+      <div>
+        <h2 className={heading2Style}>Rights & Roles</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Permission matrix loaded from the active Refine access-control
+          provider.
+        </p>
+      </div>
+
+      <div className="overflow-hidden rounded-md border border-border bg-background">
+        <DataTable>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Role</TableHead>
+              {accessControlActions.map((action) => (
+                <TableHead key={action} className="text-center capitalize">
+                  {action}
+                </TableHead>
+              ))}
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {rolePermissionRows.map((row) => (
+              <TableRow key={row.role}>
+                <TableCell className="font-medium">{row.role}</TableCell>
+                {accessControlActions.map((action) => {
+                  const allowed = row.permissions[action];
+                  return (
+                    <TableCell key={action} className="text-center">
+                      <span
+                        className={`inline-flex min-w-16 justify-center rounded-md px-2 py-1 text-xs font-medium ${
+                          allowed
+                            ? 'bg-green-100 text-green-700'
+                            : 'bg-muted text-muted-foreground'
+                        }`}
+                      >
+                        {allowed ? 'Allowed' : 'Blocked'}
+                      </span>
+                    </TableCell>
+                  );
+                })}
+              </TableRow>
+            ))}
+          </TableBody>
+        </DataTable>
+      </div>
+    </div>
+  );
+
+  const operatorPortal = (
+    <div className="flex min-w-0 flex-col gap-5">
+      <div className="grid gap-4 xl:grid-cols-[1fr_360px]">
+        <div className="rounded-md border border-border bg-[#26002e] p-5 text-white shadow-sm">
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-blue-200">
+                Operator Dashboard
+              </p>
+              <h2 className="mt-2 text-2xl font-semibold">
+                Wafi / Shell network needs reconnect attention
+              </h2>
+              <p className="mt-2 max-w-3xl text-sm text-blue-100">
+                Daily view for assigned stations, charger availability, test activity, field actions, and team follow-up.
+              </p>
+            </div>
+            <div className="rounded-md border border-white/15 bg-white/10 px-5 py-4 text-center">
+              <p className="text-4xl font-semibold">0 / 2</p>
+              <p className="mt-1 text-xs font-semibold uppercase tracking-[0.16em] text-blue-100">
+                chargers available now
+              </p>
+            </div>
+          </div>
+          <div className="mt-5 grid gap-3 md:grid-cols-4">
+            {operatorMetrics.map((metric) => (
+              <div
+                key={metric.label}
+                className="rounded-md border border-white/15 bg-white/10 p-4"
+              >
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-blue-100">
+                  {metric.label}
+                </p>
+                <p className="mt-2 text-2xl font-semibold">{metric.value}</p>
+                <p className="mt-1 text-xs text-blue-100">{metric.detail}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+          <h2 className={heading2Style}>Operator Scope</h2>
+          <div className="mt-4 grid gap-3">
+            {[
+              ['Role', 'Day-to-day operations only'],
+              ['Network', 'Wafi / Shell assigned stations'],
+              ['Pricing', 'No tariff authority'],
+            ].map(([label, detail]) => (
+              <div
+                key={label}
+                className="rounded-md border border-border bg-background p-3"
+              >
+                <p className="text-sm font-semibold">{label}</p>
+                <p className="mt-1 text-xs text-muted-foreground">{detail}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        {[
+          ['Charger Availability', 'Critical', 'Both assigned chargers need reconnect validation.', 'bg-red-100 text-red-700'],
+          ['Session Activity', 'Test only', 'Only one completed TEST-RFID transaction is visible.', 'bg-amber-100 text-amber-700'],
+          ['Field Follow-up', '2 stations', 'BattleX and SPL Bahria require operational review.', 'bg-blue-100 text-blue-700'],
+          ['Team Queue', '4 actions', 'Review incidents, export transactions, assign maintenance, invite staff.', 'bg-purple-100 text-purple-700'],
+        ].map(([title, status, detail, badgeClass]) => (
+          <div key={title} className="rounded-md border border-border bg-card p-5 shadow-sm">
+            <div className="flex items-start justify-between gap-3">
+              <p className="font-semibold">{title}</p>
+              <span className={`rounded-md px-2 py-1 text-xs font-semibold ${badgeClass}`}>
+                {status}
+              </span>
+            </div>
+            <p className="mt-3 text-sm text-muted-foreground">{detail}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="grid gap-5 xl:grid-cols-[1fr_420px]">
+        <div className="flex min-w-0 flex-col gap-5">
+          <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className={heading2Style}>Assigned Station Health</h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Operator-owned stations, connector availability, and current field status.
+                </p>
+              </div>
+              <span className="rounded-md bg-red-100 px-2 py-1 text-xs font-semibold text-red-700">
+                needs attention
+              </span>
+            </div>
+            <div className="mt-4 overflow-hidden rounded-md border border-border bg-background">
+              <DataTable>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Station</TableHead>
+                    <TableHead>Location</TableHead>
+                    <TableHead>Connectors</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Alert</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {operatorStationHealth.map((station) => (
+                    <TableRow key={station.station}>
+                      <TableCell className="font-medium">{station.station}</TableCell>
+                      <TableCell>{station.location}</TableCell>
+                      <TableCell>{station.connectors}</TableCell>
+                      <TableCell>
+                        <span className="rounded-md bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-700">
+                          {station.status}
+                        </span>
+                      </TableCell>
+                      <TableCell>{station.alert}</TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </DataTable>
+            </div>
+          </div>
+
+          <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <h2 className={heading2Style}>Assigned Charger Fleet</h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  CPIDs in the operator scope with firmware, last-seen state, and drill-down access.
+                </p>
+              </div>
+              <Button type="button" variant="outline" className="sm:self-start">
+                Export Report
+              </Button>
+            </div>
+            <div className="mt-4 overflow-hidden rounded-md border border-border bg-background">
+              <DataTable>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>CPID</TableHead>
+                    <TableHead>Station</TableHead>
+                    <TableHead>Charger</TableHead>
+                    <TableHead>Firmware</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Last Seen</TableHead>
+                    <TableHead>Dashboard</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {operatorScopedChargers.map((charger) => (
+                    <TableRow key={charger.cpid}>
+                      <TableCell className="font-medium">{charger.cpid}</TableCell>
+                      <TableCell>{charger.stationName}</TableCell>
+                      <TableCell>{charger.chargerName}</TableCell>
+                      <TableCell>{charger.firmwareVersion}</TableCell>
+                      <TableCell>
+                        <span
+                          className={`rounded-md px-2 py-1 text-xs font-medium ${
+                            charger.status === 'Defined'
+                              ? 'bg-blue-100 text-blue-700'
+                              : 'bg-green-100 text-green-700'
+                          }`}
+                        >
+                          {charger.status}
+                        </span>
+                      </TableCell>
+                      <TableCell>{charger.lastSeen || 'Never'}</TableCell>
+                      <TableCell>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() =>
+                            push(`/partners?role=operator&section=daily-operations&action=charger-dashboard&cpid=${charger.cpid}`)
+                          }
+                        >
+                          Open
+                        </Button>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </DataTable>
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h2 className={heading2Style}>Operator Action Inbox</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Practical next steps for the assigned network.
+              </p>
+            </div>
+            <span className="rounded-md bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-700">
+              4 open
+            </span>
+          </div>
+          <div className="mt-4 grid max-h-[520px] gap-3 overflow-y-auto pr-1">
+            {operatorWorkflows.map((workflow, index) => (
+              <div
+                key={workflow}
+                className="rounded-md border border-border bg-background p-4"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-semibold">{workflow}</p>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {index === 0
+                        ? 'Review offline and stale station states before customer sessions begin.'
+                        : index === 1
+                          ? 'Download the current transaction evidence for operator reporting.'
+                          : index === 2
+                            ? 'Assign a field owner for reconnect and charger validation.'
+                            : 'Add the staff member who will monitor daily station operations.'}
+                    </p>
+                  </div>
+                  <span className="rounded-md bg-blue-100 px-2 py-1 text-xs font-semibold text-blue-700">
+                    action
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  const liveDashboardCounts = liveDashboard?.counts ?? {};
+  const liveDashboardChargers = liveDashboard?.chargers ?? [];
+  const callMonitoringEvents = liveDashboard?.recentEvents ?? [];
+  const liveDashboardSourceLabel = liveDashboardError
+    ? 'Feed unavailable'
+    : liveDashboardUpdatedAt
+      ? `Updated ${liveDashboardUpdatedAt}`
+      : 'Waiting for live data';
+  const offlineChargerCount = liveDashboardCounts.offlineChargers ??
+    liveDashboardChargers.filter((charger) => !charger.online).length;
+
+  const formatDashboardTime = (value?: string | null) => {
+    if (!value) return 'Never';
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
+  };
+
+  const superUserStatusCards: Array<[string, string, string, string]> = [
+    [
+      'Charger Connectivity',
+      offlineChargerCount ? 'Critical' : 'Healthy',
+      `${offlineChargerCount} of ${liveDashboardCounts.chargers ?? liveDashboardChargers.length} chargers offline.`,
+      offlineChargerCount ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700',
+    ],
+    [
+      'Activity Proof',
+      liveDashboardCounts.sessions24h ? 'Active' : 'Quiet',
+      `${liveDashboardCounts.sessions24h ?? 0} sessions in the last 24 hours.`,
+      liveDashboardCounts.sessions24h ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700',
+    ],
+    [
+      'Energy',
+      `${(liveDashboardCounts.energy24hKwh ?? 0).toFixed(2)} kWh`,
+      `${(liveDashboardCounts.totalEnergyKwh ?? 0).toFixed(2)} kWh total recorded.`,
+      'bg-blue-100 text-blue-700',
+    ],
+  ];
+
+  const superUserStationRows: Array<[string, string, string, string, string]> =
+    liveDashboardChargers.map((charger) => [
+      charger.displayName || charger.chargerId || 'Unknown station',
+      charger.operator || 'Unassigned',
+      charger.chargerId || 'Unknown',
+      formatDashboardTime(charger.lastHeartbeat || charger.lastSeen),
+      charger.online ? 'Online' : 'Offline',
+    ]);
+
+  const fourHoursAgo = Date.now() - 4 * 60 * 60 * 1000;
+  const eventIssues: Array<[string, string, string, string]> = callMonitoringEvents
+    .filter((event) => {
+      const timestamp = event.ts ? new Date(event.ts).getTime() : 0;
+      const payload = event.payload && typeof event.payload === 'object'
+        ? event.payload as Record<string, unknown>
+        : {};
+      const errorCode = String(payload.errorCode ?? '');
+      const vendorErrorCode = String(payload.vendorErrorCode ?? '');
+      const info = String(payload.info ?? '');
+      const meaningfulError = Boolean(event.error) ||
+        (errorCode && errorCode !== 'NoError') ||
+        (vendorErrorCode && vendorErrorCode !== '0') ||
+        /error|fault|power.?loss|offline|failed/i.test(info);
+      return timestamp >= fourHoursAgo && meaningfulError;
+    })
+    .map((event) => {
+      const payload = event.payload && typeof event.payload === 'object'
+        ? event.payload as Record<string, unknown>
+        : {};
+      const code = payload.vendorErrorCode ||
+        (payload.errorCode !== 'NoError' ? payload.errorCode : '') ||
+        event.error || 'Issue reported';
+      const info = payload.info ? ` - ${String(payload.info)}` : '';
+      return [
+        `${event.chargerId || 'Unknown charger'} - ${event.action || event.eventType || 'OCPP event'}`,
+        `Error ${String(code)}${info}`,
+        'Platform Operations',
+        'review',
+      ];
+    });
+  const offlineIssues: Array<[string, string, string, string]> = liveDashboardChargers
+    .filter((charger) => !charger.online)
+    .map((charger) => [
+      `${charger.chargerId || 'Unknown'} - ${charger.displayName || 'Station'}`,
+      'No live heartbeat / charger offline',
+      charger.operator || 'Unassigned',
+      'offline',
+    ]);
+  const superUserAttentionRows = [...eventIssues, ...offlineIssues];
+
+  const superUserCommandCenter = (
+    <div className="flex min-w-0 flex-col gap-5">
+      <div className="rounded-md border border-border bg-[#26002e] p-5 text-white shadow-sm">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-blue-200">
+              Super User Command Center
+            </p>
+            <h2 className="mt-2 text-2xl font-semibold">Network operations</h2>
+            <p className="mt-2 max-w-3xl text-sm text-blue-100">
+              Live operational status across operators, stations, chargers, and sessions.
+            </p>
+          </div>
+          <Button type="button" variant="outline" onClick={() => void refreshLiveDashboard()} disabled={liveDashboardLoading}>
+            {liveDashboardLoading ? 'Refreshing' : 'Refresh'}
+          </Button>
+        </div>
+        {liveDashboardError && <p className="mt-3 text-sm text-red-200">{liveDashboardError}</p>}
+      </div>
+
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_420px]">
+        <div className="flex min-w-0 flex-col gap-5">
+          <div className="rounded-md border border-border bg-card p-4 shadow-sm">
+            <div className="grid gap-4 md:grid-cols-3">
+              {superUserStatusCards.map(([title, status, detail, badgeClass], index) => (
+                <div key={title} className={`min-w-0 ${index < superUserStatusCards.length - 1 ? 'border-b border-border pb-4 md:border-b-0 md:border-r md:pb-0 md:pr-4' : ''}`}>
+                  <div className="flex items-start justify-between gap-3">
+                    <p className="text-sm font-semibold">{title}</p>
+                    <span className={`shrink-0 rounded-md px-2 py-1 text-xs font-semibold ${badgeClass}`}>{status}</span>
+                  </div>
+                  <p className="mt-2 text-sm text-muted-foreground">{detail}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className={heading2Style}>Station Health</h2>
+                <p className="mt-1 text-sm text-muted-foreground">Status by site, operator, charger, and last contact.</p>
+              </div>
+              <span className={`rounded-md px-2 py-1 text-xs font-semibold ${offlineChargerCount ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
+                {offlineChargerCount ? 'needs attention' : 'healthy'}
+              </span>
+            </div>
+            <div className="mt-4 overflow-hidden rounded-md border border-border bg-background">
+              <DataTable>
+                <TableHeader><TableRow><TableHead>Station</TableHead><TableHead>Operator</TableHead><TableHead>Charger</TableHead><TableHead>Last Contact</TableHead><TableHead>Status</TableHead></TableRow></TableHeader>
+                <TableBody>
+                  {superUserStationRows.map(([station, operator, charger, lastContact, status]) => (
+                    <TableRow key={charger}>
+                      <TableCell className="font-medium">{station}</TableCell><TableCell>{operator}</TableCell><TableCell>{charger}</TableCell><TableCell>{lastContact}</TableCell>
+                      <TableCell><span className={`rounded-md px-2 py-1 text-xs font-semibold ${status === 'Online' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>{status}</span></TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </DataTable>
+            </div>
+          </div>
+        </div>
+
+        <div className="self-start rounded-md border border-border bg-card p-5 shadow-sm">
+          <div className="flex items-start justify-between gap-3">
+            <div><h2 className={heading2Style}>Charger Attention Inbox</h2><p className="mt-1 text-sm text-muted-foreground">Errors, power loss, fault codes, and offline chargers from the last 4 hours.</p></div>
+            <span className="rounded-md bg-red-100 px-2 py-1 text-xs font-semibold text-red-700">{superUserAttentionRows.length} open</span>
+          </div>
+          <div className="mt-4 grid max-h-[520px] gap-3 overflow-y-auto pr-1">
+            {superUserAttentionRows.length ? superUserAttentionRows.map(([title, issue, owner, status], index) => (
+              <div key={`${title}-${index}`} className="rounded-md border border-border bg-background p-3">
+                <div className="flex items-start justify-between gap-3"><div><p className="text-sm font-semibold">{title}</p><p className="mt-1 text-xs text-muted-foreground">{issue}</p></div><span className="rounded-md bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-700">{status}</span></div>
+                <p className="mt-2 text-xs font-medium text-muted-foreground">Owner: {owner}</p>
+              </div>
+            )) : <p className="rounded-md border border-border bg-background p-4 text-sm text-muted-foreground">No charger issues reported in the last 4 hours.</p>}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  const callMonitoringPanel = (
+    <div className="flex min-w-0 flex-col gap-5">
+      <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">Super Admin</p>
+            <h2 className={heading2Style}>Call Monitoring</h2>
+            <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+              Recent OCPP calls received and acknowledged by the CSMS. Live data refreshes with the dashboard feed.
+            </p>
+          </div>
+          <Button type="button" variant="outline" onClick={() => void refreshLiveDashboard()}>
+            Refresh
+          </Button>
+        </div>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-3">
+        {[
+          ['Recent calls', String(callMonitoringEvents.length), liveDashboardSourceLabel],
+          ['Active sessions', String(liveDashboardCounts.activeSessions ?? 0), 'Transactions currently marked active'],
+          ['Queued commands', String(liveDashboardCounts.queuedCommands ?? 0), 'Backend command queue'],
+        ].map(([label, value, detail]) => (
+          <div key={label} className="rounded-md border border-border bg-card p-5 shadow-sm">
+            <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">{label}</p>
+            <p className="mt-2 text-2xl font-semibold">{value}</p>
+            <p className="mt-1 text-sm text-muted-foreground">{detail}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+        <h2 className={heading2Style}>Recent OCPP Calls</h2>
+        <div className="mt-4 overflow-hidden rounded-md border border-border bg-background">
+          <DataTable>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Time</TableHead>
+                <TableHead>Charger</TableHead>
+                <TableHead>Direction</TableHead>
+                <TableHead>Action</TableHead>
+                <TableHead>Status</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {callMonitoringEvents.length ? (
+                callMonitoringEvents.slice(0, 30).map((event, index) => (
+                  <TableRow key={`${event.ts ?? 'event'}-${event.chargerId ?? 'charger'}-${index}`}>
+                    <TableCell>{formatDashboardTime(event.ts)}</TableCell>
+                    <TableCell className="font-medium">{event.chargerId || 'Unknown'}</TableCell>
+                    <TableCell>{event.direction || 'Unknown'}</TableCell>
+                    <TableCell>{event.action || event.eventType || 'Acknowledgement'}</TableCell>
+                    <TableCell>
+                      <span className={`rounded-md px-2 py-1 text-xs font-semibold ${event.error ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`}>
+                        {event.error || 'OK'}
+                      </span>
+                    </TableCell>
+                  </TableRow>
+                ))
+              ) : (
+                <TableRow>
+                  <TableCell colSpan={5} className="text-center text-sm text-muted-foreground">
+                    No recent calls found in the live dashboard feed.
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </DataTable>
+        </div>
+      </div>
+    </div>
+  );
+
+  const operatorChargerDashboard = (
+    <div className="flex min-w-0 flex-col gap-5">
+      <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h2 className={heading2Style}>
+              {selectedOperatorCharger?.chargerName ?? 'Charger Dashboard'}
+            </h2>
+            <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+              Operator drill-down for a selected charger: station assignment, OCPP identity, firmware, connector state, and operating analytics.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2 sm:self-start">
+            <Button
+              type="button"
+              variant="success"
+              onClick={() => push('/partners?role=operator&section=daily-operations&action=charger-dashboard&cpid=13074934')}
+            >
+              Voltaris Insights
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() =>
+                push('/partners?role=operator&section=fleet-setup&action=station-management')
+              }
+            >
+              <ArrowLeft className={buttonIconSize} />
+              Back to Fleet
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      {selectedOperatorCharger && (
+        <>
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            {[
+              ['CPID', selectedOperatorCharger.cpid, selectedOperatorCharger.expectedUrl],
+              ['Station', selectedOperatorCharger.stationName, selectedOperatorCharger.stationId],
+              ['Firmware', selectedOperatorCharger.firmwareVersion, `${selectedOperatorCharger.manufacturer} ${selectedOperatorCharger.model}`],
+              ['Connector State', selectedOperatorCharger.connectorCount, selectedOperatorCharger.connectorTypes],
+            ].map(([label, value, detail]) => (
+              <div
+                key={label}
+                className="rounded-md border border-border bg-card p-5 shadow-sm"
+              >
+                <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
+                  {label}
+                </p>
+                <p className="mt-2 break-words text-2xl font-semibold text-foreground">
+                  {value}
+                </p>
+                <p className="mt-1 break-words text-sm text-muted-foreground">
+                  {detail}
+                </p>
+              </div>
+            ))}
+          </div>
+
+          <div className="grid gap-5 xl:grid-cols-[1.2fr_0.8fr]">
+            <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <h2 className={heading2Style}>Charger Analytics</h2>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Energy, session, revenue, reconnect, and failure trend for the selected CPID.
+                  </p>
+                </div>
+                <div className="rounded-md border border-border bg-background px-3 py-2 text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                  Last 24h
+                </div>
+              </div>
+              <ChartContainer
+                config={timeseriesChartConfig}
+                className="mt-4 h-72 w-full"
+              >
+                <LineChart data={operatorTimeseries} margin={{ left: 12, right: 12 }}>
+                  <CartesianGrid vertical={false} />
+                  <XAxis dataKey="time" tickLine={false} axisLine={false} />
+                  <YAxis tickLine={false} axisLine={false} />
+                  <ChartTooltip content={<ChartTooltipContent />} />
+                  <Line type="monotone" dataKey="energy" stroke="var(--color-energy)" strokeWidth={2} dot={false} />
+                  <Line type="monotone" dataKey="sessions" stroke="var(--color-sessions)" strokeWidth={2} dot={false} />
+                  <Line type="monotone" dataKey="failures" stroke="var(--color-failures)" strokeWidth={2} dot={false} />
+                  <Line type="monotone" dataKey="reconnects" stroke="var(--color-reconnects)" strokeWidth={2} dot={false} />
+                </LineChart>
+              </ChartContainer>
+            </div>
+
+            <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+              <h2 className={heading2Style}>Identity & Policy</h2>
+              <div className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
+                <div><span className="text-muted-foreground">Operator</span><p className="font-medium">{selectedOperatorCharger.operatorId}</p></div>
+                <div><span className="text-muted-foreground">Region / city</span><p className="font-medium">{selectedOperatorCharger.region} / {selectedOperatorCharger.city}</p></div>
+                <div><span className="text-muted-foreground">OCPP version</span><p className="font-medium">{selectedOperatorCharger.ocppVersion}</p></div>
+                <div><span className="text-muted-foreground">Last seen</span><p className="font-medium">{selectedOperatorCharger.lastSeen || 'Never'}</p></div>
+                <div><span className="text-muted-foreground">Registration</span><p className="font-medium">{selectedOperatorCharger.registrationPolicy}</p></div>
+                <div><span className="text-muted-foreground">Command policy</span><p className="font-medium">{selectedOperatorCharger.commandPolicy}</p></div>
+                <div><span className="text-muted-foreground">Grid reference</span><p className="font-medium">{selectedOperatorCharger.gridReference}</p></div>
+                <div><span className="text-muted-foreground">Meter reference</span><p className="font-medium">{selectedOperatorCharger.meterReference}</p></div>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+
+  const operatorAnalyticsDashboard = (
+    <div className="flex min-w-0 flex-col gap-5">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        {[
+          ['Network Uptime', '99.2%', 'Last 24 hours'],
+          ['Peak Load', '742 kW', '16:20 today'],
+          ['Transaction Failures', '8', '3 require review'],
+          ['Reconnects', '7', '5 recovered automatically'],
+        ].map(([label, value, detail]) => (
+          <div
+            key={label}
+            className="rounded-md border border-border bg-[#26002e] p-5 text-white shadow-sm"
+          >
+            <p className="text-xs font-medium uppercase tracking-[0.18em] text-white/60">
+              {label}
+            </p>
+            <p className="mt-2 text-3xl font-semibold">{value}</p>
+            <p className="mt-1 text-sm text-white/60">{detail}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="grid gap-5 xl:grid-cols-[1.35fr_0.65fr]">
+        <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h2 className={heading2Style}>Energy, Revenue & Sessions</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Live operator analytics for usage, transaction failures, and
+                station reconnects.
+              </p>
+            </div>
+            <div className="rounded-md border border-border bg-background px-3 py-2 text-xs font-medium uppercase tracking-[0.16em] text-muted-foreground">
+              Last 24h
+            </div>
+          </div>
+          <ChartContainer
+            config={timeseriesChartConfig}
+            className="mt-4 h-72 w-full"
+          >
+            <LineChart data={operatorTimeseries} margin={{ left: 12, right: 12 }}>
+              <CartesianGrid vertical={false} />
+              <XAxis dataKey="time" tickLine={false} axisLine={false} />
+              <YAxis tickLine={false} axisLine={false} />
+              <ChartTooltip content={<ChartTooltipContent />} />
+              <Line
+                type="monotone"
+                dataKey="energy"
+                stroke="var(--color-energy)"
+                strokeWidth={2}
+                dot={false}
+              />
+              <Line
+                type="monotone"
+                dataKey="sessions"
+                stroke="var(--color-sessions)"
+                strokeWidth={2}
+                dot={false}
+              />
+              <Line
+                type="monotone"
+                dataKey="revenue"
+                stroke="var(--color-revenue)"
+                strokeWidth={2}
+                dot={false}
+              />
+              <Line
+                type="monotone"
+                dataKey="failures"
+                stroke="var(--color-failures)"
+                strokeWidth={2}
+                dot={false}
+              />
+              <Line
+                type="monotone"
+                dataKey="reconnects"
+                stroke="var(--color-reconnects)"
+                strokeWidth={2}
+                dot={false}
+              />
+            </LineChart>
+          </ChartContainer>
+        </div>
+
+        <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+          <h2 className={heading2Style}>Location Utilization</h2>
+          <ChartContainer
+            config={utilizationChartConfig}
+            className="mt-4 h-72 w-full"
+          >
+            <RechartsBarChart
+              data={operatorUtilization}
+              margin={{ left: 8, right: 8 }}
+            >
+              <CartesianGrid vertical={false} />
+              <XAxis dataKey="location" tickLine={false} axisLine={false} />
+              <YAxis tickLine={false} axisLine={false} />
+              <ChartTooltip content={<ChartTooltipContent />} />
+              <Bar
+                dataKey="utilization"
+                fill="var(--color-utilization)"
+                radius={4}
+              />
+            </RechartsBarChart>
+          </ChartContainer>
+        </div>
+      </div>
+
+      <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+        <h2 className={heading2Style}>Transaction Failures & Reconnects</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Operator incident stream for failed session starts, payment issues,
+          heartbeat loss, and OCPP websocket recovery.
+        </p>
+        <div className="mt-4 overflow-hidden rounded-md border border-border bg-background">
+          <DataTable>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Time</TableHead>
+                <TableHead>Station</TableHead>
+                <TableHead>Type</TableHead>
+                <TableHead>Detail</TableHead>
+                <TableHead>Status</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {operatorFailureEvents.map((event) => (
+                <TableRow key={`${event.time}-${event.station}-${event.type}`}>
+                  <TableCell>{event.time}</TableCell>
+                  <TableCell>{event.station}</TableCell>
+                  <TableCell>
+                    <span
+                      className={`rounded-md px-2 py-1 text-xs font-medium ${
+                        event.type === 'Reconnect'
+                          ? 'bg-blue-100 text-blue-700'
+                          : 'bg-red-100 text-red-700'
+                      }`}
+                    >
+                      {event.type}
+                    </span>
+                  </TableCell>
+                  <TableCell className="whitespace-normal">
+                    {event.detail}
+                  </TableCell>
+                  <TableCell>{event.status}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </DataTable>
+        </div>
+      </div>
+
+      <div className="grid gap-5 xl:grid-cols-[0.85fr_1.15fr]">
+        <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+          <h2 className={heading2Style}>Network Status</h2>
+          <div className="mt-4 grid gap-3">
+            {[
+              ['CSMS API', 'Healthy', '42 ms'],
+              ['OCPP Gateway', 'Healthy', '99.9%'],
+              ['Payment Capture', 'Degraded', '2 retries'],
+            ].map(([system, status, detail]) => (
+              <div
+                key={system}
+                className="flex items-center justify-between rounded-md border border-border bg-background px-4 py-3"
+              >
+                <div>
+                  <p className="font-medium">{system}</p>
+                  <p className="text-sm text-muted-foreground">{detail}</p>
+                </div>
+                <span
+                  className={`rounded-md px-2 py-1 text-xs font-medium ${
+                    status === 'Healthy'
+                      ? 'bg-green-100 text-green-700'
+                      : 'bg-amber-100 text-amber-700'
+                  }`}
+                >
+                  {status}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+          <h2 className={heading2Style}>Alerts & Events</h2>
+          <div className="mt-4 overflow-hidden rounded-md border border-border bg-background">
+            <DataTable>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Time</TableHead>
+                  <TableHead>Source</TableHead>
+                  <TableHead>Signal</TableHead>
+                  <TableHead>Severity</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {operatorAlerts.map((alert) => (
+                  <TableRow key={`${alert.time}-${alert.source}`}>
+                    <TableCell>{alert.time}</TableCell>
+                    <TableCell>{alert.source}</TableCell>
+                    <TableCell>{alert.signal}</TableCell>
+                    <TableCell>{alert.severity}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </DataTable>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  const stationDashboard = (
+    <div className="flex min-w-0 flex-col gap-5">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        {stationMetrics.map((metric) => (
+          <div
+            key={metric.label}
+            className="rounded-md border border-border bg-card p-5 shadow-sm"
+          >
+            <p className="text-xs font-medium uppercase tracking-[0.18em] text-muted-foreground">
+              {metric.label}
+            </p>
+            <p className="mt-2 text-3xl font-semibold text-foreground">
+              {metric.value}
+            </p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {metric.detail}
+            </p>
+          </div>
+        ))}
+      </div>
+
+      <div className="grid gap-5 xl:grid-cols-[1.25fr_0.75fr]">
+        <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h2 className={heading2Style}>Charger 13074934 Station Panel</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Device-level view for one assigned charger only: connector
+                state, sessions, power, faults, and OCPP messages.
+              </p>
+            </div>
+            <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold uppercase tracking-[0.16em] text-red-700">
+              Offline
+            </div>
+          </div>
+          <ChartContainer
+            config={stationLoadChartConfig}
+            className="mt-4 h-72 w-full"
+          >
+            <LineChart data={stationLoadSeries} margin={{ left: 12, right: 12 }}>
+              <CartesianGrid vertical={false} />
+              <XAxis dataKey="time" tickLine={false} axisLine={false} />
+              <YAxis tickLine={false} axisLine={false} />
+              <ChartTooltip content={<ChartTooltipContent />} />
+              <Line
+                type="monotone"
+                dataKey="power"
+                stroke="var(--color-power)"
+                strokeWidth={2}
+                dot={false}
+              />
+              <Line
+                type="monotone"
+                dataKey="temperature"
+                stroke="var(--color-temperature)"
+                strokeWidth={2}
+                dot={false}
+              />
+              <Line
+                type="monotone"
+                dataKey="sessions"
+                stroke="var(--color-sessions)"
+                strokeWidth={2}
+                dot={false}
+              />
+            </LineChart>
+          </ChartContainer>
+        </div>
+
+        <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+          <h2 className={heading2Style}>Connector State</h2>
+          <div className="mt-4 overflow-hidden rounded-md border border-border bg-background">
+            <DataTable>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Connector</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Power</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {stationConnectors.map((connector) => (
+                  <TableRow key={connector.connector}>
+                    <TableCell>
+                      <p className="font-medium">{connector.connector}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {connector.type}
+                      </p>
+                    </TableCell>
+                    <TableCell>
+                      <span
+                        className={`rounded-md px-2 py-1 text-xs font-medium ${
+                          connector.status === 'Faulted'
+                            ? 'bg-red-100 text-red-700'
+                            : connector.status === 'Charging'
+                              ? 'bg-blue-100 text-blue-700'
+                              : connector.status === 'Unavailable'
+                                ? 'bg-muted text-muted-foreground'
+                                : 'bg-green-100 text-green-700'
+                        }`}
+                      >
+                        {connector.status}
+                      </span>
+                    </TableCell>
+                    <TableCell>
+                      <p>{connector.power}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {connector.detail}
+                      </p>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </DataTable>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid gap-5 xl:grid-cols-[1.1fr_0.9fr]">
+        <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+          <h2 className={heading2Style}>Sessions</h2>
+          <div className="mt-4 overflow-hidden rounded-md border border-border bg-background">
+            <DataTable>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Time</TableHead>
+                  <TableHead>User</TableHead>
+                  <TableHead>Connector</TableHead>
+                  <TableHead>Energy</TableHead>
+                  <TableHead>Status</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {stationSessions.map((session) => (
+                  <TableRow key={`${session.time}-${session.connector}`}>
+                    <TableCell>{session.time}</TableCell>
+                    <TableCell>{session.user}</TableCell>
+                    <TableCell>{session.connector}</TableCell>
+                    <TableCell>{session.energy}</TableCell>
+                    <TableCell>{session.status}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </DataTable>
+          </div>
+        </div>
+
+        <div className="rounded-md border border-border bg-card p-5 shadow-sm">
+          <h2 className={heading2Style}>Diagnostics & Config</h2>
+          <div className="mt-4 grid gap-3">
+            {stationDiagnostics.map(([signal, status, detail]) => (
+              <div
+                key={signal}
+                className="flex items-center justify-between gap-4 rounded-md border border-border bg-background px-4 py-3"
+              >
+                <div>
+                  <p className="font-medium">{signal}</p>
+                  <p className="text-sm text-muted-foreground">{detail}</p>
+                </div>
+                <span
+                  className={`shrink-0 rounded-md px-2 py-1 text-xs font-medium ${
+                    status === 'View only'
+                      ? 'bg-muted text-muted-foreground'
+                      : 'bg-green-100 text-green-700'
+                  }`}
+                >
+                  {status}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className={`mb-6 ml-0 mr-6 mt-6 ${tableWrapperStyle}`}>
+      <div className="flex flex-col gap-3 border-b border-border pb-5">
+        <div className="rounded-md border border-border bg-muted px-5 py-3">
+          <div className="flex items-start justify-between gap-4">
+            <p className="text-xs font-medium uppercase tracking-[0.24em] text-muted-foreground">
+              VOLTARIS Access
+            </p>
+            <div className="text-right">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                Active Area
+              </p>
+              <p className="mt-0.5 text-sm font-semibold text-foreground">
+                {selectedRoleSection.title}
+              </p>
+            </div>
+          </div>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <h1 className="text-2xl font-semibold text-foreground">
+              {selectedRole.title}
+            </h1>
+            {selectedRoleSection.items.map((item) => (
+              <button
+                key={item.title}
+                type="button"
+                onClick={() =>
+                  push(
+                    getOpaquePartnerRoute(
+                      selectedRole.id,
+                      selectedRoleSection.title,
+                      item.title,
+                    ),
+                  )
+                }
+                className={`rounded-md border px-3 py-1.5 text-sm font-medium shadow-sm transition-colors ${
+                  actionGroupParam === getItemSlug(item.title)
+                    ? 'border-[#26002e] bg-[#26002e] text-white'
+                    : 'border-border bg-background text-foreground hover:bg-accent hover:text-accent-foreground'
+                }`}
+              >
+                {item.title}
+              </button>
+            ))}
+          </div>
+        </div>
+        {(selectedRole.callout || isTariffSection) && (
+          <div className="flex flex-col gap-4 pt-3">
+            <div className="min-w-0 overflow-hidden rounded-md border border-border bg-[#292927] text-white shadow-sm">
+              {selectedRole.callout && (
+                <div className="border-b border-white/10 bg-[#123510] px-5 py-3 text-sm font-semibold text-green-400">
+                  {selectedRole.callout}
+                </div>
+              )}
+              {isTariffSection &&
+                (showTariffForm ? tariffChangeForm : tariffHistoryList)}
+              </div>
+          </div>
+        )}
+      </div>
+      {isSuperCommandCenter && superUserCommandCenter}
+      {isSuperReporting && operatorAnalyticsDashboard}
+      {isSuperCallMonitoring && callMonitoringPanel}
+      {isAuditActivity && auditActivityList}
+      {isDiagnosticsLogs && diagnosticsLogsList}
+      {isEmergencyAccess && emergencyAccessList}
+      {isRightsRoles && rightsRolesList}
+      {isUserRoles && userRolesList}
+      {isTenantOperatorManagement && operatorManagementPanel}
+      {(isTenantOperatorModify || isTenantOperatorCreate) && operatorModifyPage}
+      {isStationRegistry && stationRegistryPanel}
+      {(isStationCreate || isStationModify) && stationFormPanel}
+      {isChargerRegistry && chargerRegistryPanel}
+      {(isChargerCreate || isChargerModify) && chargerFormPanel}
+      {isFirmwareManagement && firmwareManagementPanel}
+      {isOperatorPortal &&
+        (isOperatorChargerDashboard
+          ? operatorChargerDashboard
+          : isOperatorAnalytics
+            ? operatorAnalyticsDashboard
+            : operatorPortal)}
+      {isStationDashboard && stationDashboard}
+      {!isTariffSection &&
+        !isSuperCommandCenter &&
+        !isSuperReporting &&
+        !isSuperCallMonitoring &&
+        !isAuditActivity &&
+        !isDiagnosticsLogs &&
+        !isEmergencyAccess &&
+        !isRightsRoles &&
+        !isUserRoles &&
+        !isTenantOperatorManagement &&
+        !isTenantOperatorModify &&
+        !isTenantOperatorCreate &&
+        !isStationRegistry &&
+        !isStationCreate &&
+        !isStationModify &&
+        !isChargerRegistry &&
+        !isChargerCreate &&
+        !isChargerModify &&
+        !isFirmwareManagement &&
+        !isOperatorPortal &&
+        !isStationDashboard && (
+          <div className="flex min-w-0 flex-col gap-4">
+            <div className={tableHeaderWrapperFlex}>
+              <h2 className={heading2Style}>Rights & Management</h2>
+              <div className={tableSearchFlex}>
+                <CanAccess
+                  resource={ResourceType.PARTNERS}
+                  action={ActionType.CREATE}
+                >
+                  <Button
+                    variant="success"
+                    onClick={() => push(`/${MenuSection.PARTNERS}/new`)}
+                  >
+                    <Plus className={buttonIconSize} />
+                    {translate('buttons.add')}{' '}
+                    {translate('TenantPartners.TenantPartners')}
+                  </Button>
+                </CanAccess>
+                <CanAccess
+                  resource={ResourceType.PARTNERS}
+                  action={ActionType.LIST}
+                >
+                  {columnSelector}
+                </CanAccess>
+              </div>
+            </div>
+            <CanAccess
+              resource={ResourceType.PARTNERS}
+              action={ActionType.LIST}
+              fallback={<AccessDeniedFallback />}
+            >
+              <Table
+                refineCoreProps={{
+                  resource: ResourceType.PARTNERS,
+                  sorters: DEFAULT_SORTERS,
+                  meta: {
+                    gqlQuery: PARTNERS_LIST_QUERY,
+                  },
+                  queryOptions: {
+                    ...getPlainToInstanceOptions(TenantPartnerClass),
+                    select: (data: any) => {
+                      return data;
+                    },
+                  },
+                }}
+                enableSorting
+                enableFilters
+                showHeader
+                tableStateKey={ResourceType.PARTNERS}
+              >
+                {renderedVisibleColumns}
+              </Table>
+            </CanAccess>
+          </div>
+        )}
+    </div>
+  );
+};
